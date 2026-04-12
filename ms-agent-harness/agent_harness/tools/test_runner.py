@@ -1,0 +1,134 @@
+"""
+Test runner — execute tests and measure coverage.
+
+Supports pytest (Python), jest (Node.js) with structured output parsing.
+"""
+
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+from agent_framework import tool
+
+
+@tool(approval_mode="never_require")
+def run_tests(test_dir: str, language: str = "python") -> str:
+    """
+    Run tests for a migrated module. Returns pass/fail results.
+    Supports: pytest (Python), jest (Node.js).
+    """
+    runners = {
+        "python": _run_pytest,
+        "node": _run_jest,
+    }
+    runner = runners.get(language)
+    if not runner:
+        return f"No test runner configured for language: {language}"
+
+    return runner(test_dir)
+
+
+@tool(approval_mode="never_require")
+def measure_coverage(test_dir: str, language: str = "python") -> str:
+    """
+    Run tests with coverage measurement. Returns coverage percentage and details.
+    """
+    if language == "python":
+        return _run_pytest_with_coverage(test_dir)
+    elif language == "node":
+        return _run_jest_with_coverage(test_dir)
+    return f"Coverage measurement not supported for: {language}"
+
+
+def _run_pytest(test_dir: str) -> str:
+    """Run pytest and return structured results."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", test_dir, "-v", "--tb=short", "--no-header"],
+            capture_output=True, text=True, timeout=120,
+        )
+        output = result.stdout + result.stderr
+
+        # Parse summary line
+        summary_match = re.search(r'(\d+) passed', output)
+        failed_match = re.search(r'(\d+) failed', output)
+
+        passed = int(summary_match.group(1)) if summary_match else 0
+        failed = int(failed_match.group(1)) if failed_match else 0
+        total = passed + failed
+
+        status = "PASS" if result.returncode == 0 else "FAIL"
+
+        return (
+            f"Status: {status}\n"
+            f"Total: {total} | Passed: {passed} | Failed: {failed}\n"
+            f"Exit code: {result.returncode}\n\n"
+            f"Output:\n{output[-2000:]}"  # Last 2000 chars to limit tokens
+        )
+    except FileNotFoundError:
+        return "ERROR: pytest not installed. Run: pip install pytest"
+    except subprocess.TimeoutExpired:
+        return "ERROR: Tests timed out after 120 seconds"
+    except Exception as e:
+        return f"ERROR running tests: {e}"
+
+
+def _run_pytest_with_coverage(test_dir: str) -> str:
+    """Run pytest with coverage and return percentage."""
+    try:
+        # Find the source directory (sibling of tests/)
+        source_dir = str(Path(test_dir).parent)
+
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", test_dir, f"--cov={source_dir}",
+             "--cov-report=term-missing", "--tb=short", "--no-header"],
+            capture_output=True, text=True, timeout=120,
+        )
+        output = result.stdout + result.stderr
+
+        # Parse coverage percentage
+        coverage_match = re.search(r'TOTAL\s+\d+\s+\d+\s+(\d+)%', output)
+        coverage_pct = int(coverage_match.group(1)) if coverage_match else 0
+
+        return (
+            f"Coverage: {coverage_pct}%\n"
+            f"Exit code: {result.returncode}\n\n"
+            f"Details:\n{output[-2000:]}"
+        )
+    except FileNotFoundError:
+        return "ERROR: pytest-cov not installed. Run: pip install pytest-cov"
+    except Exception as e:
+        return f"ERROR measuring coverage: {e}"
+
+
+def _run_jest(test_dir: str) -> str:
+    """Run jest and return structured results."""
+    try:
+        result = subprocess.run(
+            ["npx", "jest", test_dir, "--verbose", "--no-cache"],
+            capture_output=True, text=True, timeout=120,
+        )
+        output = result.stdout + result.stderr
+        status = "PASS" if result.returncode == 0 else "FAIL"
+
+        return f"Status: {status}\nExit code: {result.returncode}\n\nOutput:\n{output[-2000:]}"
+    except Exception as e:
+        return f"ERROR running jest: {e}"
+
+
+def _run_jest_with_coverage(test_dir: str) -> str:
+    """Run jest with coverage."""
+    try:
+        result = subprocess.run(
+            ["npx", "jest", test_dir, "--coverage", "--no-cache"],
+            capture_output=True, text=True, timeout=120,
+        )
+        output = result.stdout + result.stderr
+        coverage_match = re.search(r'All files\s*\|\s*[\d.]+\s*\|\s*[\d.]+\s*\|\s*[\d.]+\s*\|\s*([\d.]+)', output)
+        coverage_pct = float(coverage_match.group(1)) if coverage_match else 0
+
+        return f"Coverage: {coverage_pct}%\nExit code: {result.returncode}\n\nDetails:\n{output[-2000:]}"
+    except Exception as e:
+        return f"ERROR: {e}"

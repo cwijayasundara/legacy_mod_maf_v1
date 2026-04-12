@@ -1,0 +1,83 @@
+# MS Agent Harness — Configuration
+# Azure OpenAI deployments, speed profiles, and rate limits.
+
+azure_openai:
+  # Set via environment variables for secrets:
+  #   FOUNDRY_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com
+  #   FOUNDRY_MODEL=gpt-4o  (default model, agents override)
+  endpoint_env: FOUNDRY_PROJECT_ENDPOINT
+  model_env: FOUNDRY_MODEL
+
+# Model routing per agent role
+# Judgment tasks (analyzer, reviewer) get stronger models
+# Execution tasks (coder, tester) get faster/cheaper models
+models:
+  analyzer: gpt-4o           # Strong reasoning for dependency analysis
+  coder: gpt-4o-mini         # Fast execution for code generation
+  tester: gpt-4o-mini        # Moderate reasoning for test evaluation
+  reviewer: gpt-4o           # Strong reasoning for quality judgment
+
+# Speed profiles (from Azure Legacy Modernization Agents)
+# Control token budgets, reasoning effort, and parallelism per file complexity
+speed_profiles:
+  turbo:
+    description: "Fastest, lowest cost. For simple modules."
+    token_ceiling: 65000
+    reasoning_effort: low
+    max_parallel_chunks: 6
+    complexity_multipliers:
+      low: 1.5
+      medium: 2.0
+      high: 2.5
+
+  fast:
+    description: "Mixed effort based on complexity."
+    token_ceiling: 65000
+    reasoning_effort: mixed  # low on simple, medium on complex
+    max_parallel_chunks: 4
+    complexity_multipliers:
+      low: 1.5
+      medium: 2.5
+      high: 3.0
+
+  balanced:
+    description: "Default. Three-tier content-aware."
+    token_ceiling: 100000
+    reasoning_effort: medium
+    max_parallel_chunks: 3
+    complexity_multipliers:
+      low: 1.5
+      medium: 2.5
+      high: 3.5
+
+  thorough:
+    description: "Maximum quality. For complex modules."
+    token_ceiling: 100000
+    reasoning_effort: high
+    max_parallel_chunks: 2
+    complexity_multipliers:
+      low: 2.0
+      medium: 3.0
+      high: 4.0
+
+# Default profile
+default_profile: balanced
+
+# Rate limiting
+rate_limits:
+  tokens_per_minute: 210000  # 300K TPM × 0.7 safety margin
+  requests_per_minute: 60
+  sliding_window_seconds: 60
+
+# Large file thresholds (triggers chunking)
+chunking:
+  max_lines: 3000
+  max_chars: 150000
+  overlap_lines: 50
+
+# Quality gates
+quality:
+  coverage_floor: 80
+  reviewer_confidence_threshold: 70
+  max_self_healing_attempts: 3
+  max_iterations_per_module: 10

@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.pem
+*.key
+
+# Python
+*.egg-info/
+dist/
+build/
+.coverage
+.pytest_cache/
+htmlcov/
+
+# SQLite (generated at runtime)
+*.db
+*.db-shm
+*.db-wal
+
+# Migration runtime outputs
+migration-analysis/*/codex-output.log
+migrated_code/
+
+# Azure Functions local
+local.settings.json
+bin/
+obj/
+
+# Docker
+azurite-data/
+cosmos-data/

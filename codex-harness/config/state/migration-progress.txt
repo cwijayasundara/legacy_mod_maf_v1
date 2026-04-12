@@ -1,0 +1,22 @@
+# Migration Progress — Append-Only Session Log
+#
+# Each migration run appends a session block below.
+# Next session reads the LAST block to recover state.
+# Never edit or delete previous blocks.
+#
+# Format:
+# === Session N ===
+# date: <ISO 8601>
+# module: <module-name>
+# language: <lang>
+# work_item: <WI-XXXX>
+# gates_passed: [1,2,3,4,5,6]
+# gates_failed: []
+# coverage: <XX%>
+# learned_rules_count: <N>
+# blocked: <true/false>
+# block_reason: <if blocked>
+# next_action: <what to do next>
+# commit: <hash if committed>
+
+# ─── Sessions will be appended here ───
