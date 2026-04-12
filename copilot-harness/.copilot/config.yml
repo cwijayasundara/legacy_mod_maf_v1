@@ -1,0 +1,35 @@
+# GitHub Copilot CLI Configuration
+# Docs: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot
+
+# BYOK (Bring Your Own Key) — point at your Azure OpenAI endpoint
+# Set these as environment variables:
+#   COPILOT_PROVIDER_BASE_URL=https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT
+#   COPILOT_PROVIDER_TYPE=azure
+#   COPILOT_PROVIDER_API_KEY=YOUR-KEY
+#   COPILOT_MODEL=YOUR-DEPLOYMENT-NAME
+#   COPILOT_OFFLINE=true  # Skip GitHub auth entirely
+
+# Permissions — autopilot mode allows all operations
+permissions:
+  autopilot: true
+  max_continues: 20
+
+# Hooks — run on file write/commit
+hooks:
+  on_file_write:
+    - .copilot/hooks/check-architecture.js
+    - .copilot/hooks/check-file-length.js
+    - .copilot/hooks/check-function-length.js
+    - .copilot/hooks/detect-secrets.js
+    - .copilot/hooks/typecheck.js
+  on_commit:
+    - .copilot/hooks/pre-commit-gate.js
+
+# Context — files Copilot should always read
+context:
+  always_include:
+    - .copilot/AGENTS.md
+    - .copilot/quality-principles.md
+    - .copilot/architecture.md
+    - config/program.md
+    - config/state/learned-rules.md

@@ -27,6 +27,7 @@ for _env in [Path(__file__).parent.parent / ".env", Path(__file__).parent / ".en
 BASE_DIR = Path(__file__).parent.parent
 CODEX_DIR = BASE_DIR / "codex-harness"
 MS_DIR = BASE_DIR / "ms-agent-harness"
+COPILOT_DIR = BASE_DIR / "copilot-harness"
 
 
 def compare_module(module: str):
@@ -37,16 +38,20 @@ def compare_module(module: str):
 
     codex_out = CODEX_DIR / "migration-analysis" / module
     ms_out = MS_DIR / "migration-analysis" / module
+    copilot_out = COPILOT_DIR / "migration-analysis" / module
 
     codex_available = codex_out.exists() and any(codex_out.iterdir())
     ms_available = ms_out.exists() and any(ms_out.iterdir())
+    copilot_available = copilot_out.exists() and any(copilot_out.iterdir())
 
     if not codex_available:
         print("  ⚠ codex-harness: no output found — run smoke_test.py --codex-only first")
     if not ms_available:
         print("  ⚠ ms-agent-harness: no output found — run smoke_test.py --ms-only first")
+    if not copilot_available:
+        print("  ⚠ copilot-harness: no output found — run smoke_test.py --copilot-only first")
 
-    if not codex_available and not ms_available:
+    if not codex_available and not ms_available and not copilot_available:
         return
 
     # Build the list of harnesses to evaluate
@@ -55,6 +60,8 @@ def compare_module(module: str):
         harnesses.append(("codex", codex_out, CODEX_DIR))
     if ms_available:
         harnesses.append(("ms-agent", ms_out, MS_DIR))
+    if copilot_available:
+        harnesses.append(("copilot", copilot_out, COPILOT_DIR))
 
     print()
 
@@ -167,13 +174,16 @@ def compare_module(module: str):
     print("  SCORECARD")
     print(f"{'─' * 70}")
 
-    codex_total = sum(s for name, s, _ in results if name.startswith("codex"))
-    codex_max = sum(m for name, _, m in results if name.startswith("codex"))
-    ms_total = sum(s for name, s, _ in results if name.startswith("ms"))
-    ms_max = sum(m for name, _, m in results if name.startswith("ms"))
-
-    print(f"  codex-harness:    {codex_total}/{codex_max} ({codex_total/codex_max*100:.0f}%)" if codex_max else "  codex-harness: no data")
-    print(f"  ms-agent-harness: {ms_total}/{ms_max} ({ms_total/ms_max*100:.0f}%)" if ms_max else "  ms-agent-harness: no data")
+    # Score each harness
+    for label in ["codex", "ms", "copilot"]:
+        prefix = label + "-" if label != "ms" else "ms-"
+        total = sum(s for n, s, _ in results if n.startswith(prefix) or n.startswith(label))
+        maximum = sum(m for n, _, m in results if n.startswith(prefix) or n.startswith(label))
+        name_map = {"codex": "codex-harness", "ms": "ms-agent-harness", "copilot": "copilot-harness"}
+        if maximum:
+            print(f"  {name_map[label]:20s} {total}/{maximum} ({total/maximum*100:.0f}%)")
+        else:
+            print(f"  {name_map[label]:20s} no data")
 
     if codex_max and ms_max:
         diff = (codex_total / codex_max) - (ms_total / ms_max)

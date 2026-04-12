@@ -1,0 +1,5 @@
+# Coverage Ratchet Baseline
+# This value only goes UP, never down.
+# Format: single integer representing minimum coverage percentage.
+# Updated after each successful migration that achieves higher coverage.
+80
