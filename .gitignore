@@ -45,3 +45,13 @@ obj/
 # Docker
 azurite-data/
 cosmos-data/
+
+# Office temp/lock files
+~$*
+.~lock.*
+*.tmp
+
+# Exported slides/images (generated from .pptx)
+slide-*.jpg
+slide-*.png
+*.pdf
