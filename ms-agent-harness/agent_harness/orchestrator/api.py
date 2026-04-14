@@ -29,6 +29,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent_harness.pipeline import MigrationPipeline, PipelineResult
 from agent_harness.orchestrator.ado_client import AdoClient
+from agent_harness.discovery import workflow as discovery_workflow
+from agent_harness.discovery import paths as discovery_paths
+from agent_harness.persistence.repository import MigrationRepository
 
 logger = logging.getLogger("orchestrator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -39,6 +42,7 @@ MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_MIGRATIONS", "3"))
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 _pipeline: MigrationPipeline = None
 _ado: AdoClient = None
+_discovery_repo: MigrationRepository = MigrationRepository()
 
 
 @asynccontextmanager
@@ -52,6 +56,7 @@ async def lifespan(app: FastAPI):
         repo=os.environ.get("ADO_REPO", ""),
         pat=os.environ.get("ADO_PAT", ""),
     )
+    _discovery_repo.initialize()
     logger.info("Orchestrator started (MS Agent Framework, max concurrent: %d)", MAX_CONCURRENT)
     yield
 
@@ -178,3 +183,106 @@ async def _run_pipeline(req: MigrationRequest) -> MigrationResponse:
             pr_url=pr_url,
             review_score=result.review_score,
         )
+
+
+# ─── Discovery models ─────────────────────────────────────────────────────
+
+class DiscoverRequest(BaseModel):
+    repo_id: str
+    repo_path: str
+
+
+class DiscoverResponse(BaseModel):
+    status: str
+    repo_id: str
+    artifacts: dict = Field(default_factory=dict)
+    stages: list[str] = Field(default_factory=list)
+    message: str = ""
+
+
+class PlanRequest(BaseModel):
+    repo_id: str
+
+
+class PlanResponse(BaseModel):
+    repo_id: str
+    backlog: list[dict]
+    approved: bool
+
+
+class ApproveRequest(BaseModel):
+    approver: str
+    comment: str = ""
+
+
+class DiscoveryStatusResponse(BaseModel):
+    repo_id: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    approved: bool = False
+    approver: str | None = None
+    artifacts: dict = Field(default_factory=dict)
+
+
+# ─── Discovery endpoints ──────────────────────────────────────────────────
+
+@app.post("/discover", response_model=DiscoverResponse)
+async def discover(req: DiscoverRequest):
+    if not os.path.isdir(req.repo_path):
+        raise HTTPException(404, f"repo_path not found: {req.repo_path}")
+    try:
+        result = await discovery_workflow.run_discovery(
+            repo_id=req.repo_id, repo_path=req.repo_path, repo=_discovery_repo,
+        )
+    except RuntimeError as e:
+        return DiscoverResponse(status="blocked", repo_id=req.repo_id, message=str(e))
+    return DiscoverResponse(
+        status=result["status"], repo_id=req.repo_id,
+        artifacts=result.get("artifacts", {}), stages=result.get("stages", []),
+    )
+
+
+@app.post("/plan", response_model=PlanResponse)
+async def plan(req: PlanRequest):
+    try:
+        backlog = await discovery_workflow.run_planning(req.repo_id, _discovery_repo)
+    except FileNotFoundError as e:
+        raise HTTPException(409, str(e))
+    return PlanResponse(
+        repo_id=req.repo_id,
+        backlog=[item.model_dump() for item in backlog.items],
+        approved=_discovery_repo.is_backlog_approved(req.repo_id),
+    )
+
+
+@app.post("/approve/backlog/{repo_id}")
+async def approve_backlog(repo_id: str, req: ApproveRequest):
+    run = _discovery_repo.get_discovery_run(repo_id)
+    if run is None:
+        raise HTTPException(404, f"no discovery run for repo_id={repo_id}")
+    _discovery_repo.approve_backlog(repo_id, approver=req.approver, comment=req.comment)
+    return {"repo_id": repo_id, "approved": True}
+
+
+@app.get("/discover/{repo_id}", response_model=DiscoveryStatusResponse)
+async def get_discover(repo_id: str):
+    run = _discovery_repo.get_discovery_run(repo_id)
+    if run is None:
+        raise HTTPException(404, f"no discovery run for repo_id={repo_id}")
+    artifacts = {}
+    for name, p in [
+        ("inventory", discovery_paths.inventory_path(repo_id)),
+        ("graph", discovery_paths.graph_path(repo_id)),
+        ("stories", discovery_paths.stories_path(repo_id)),
+        ("backlog", discovery_paths.backlog_path(repo_id)),
+    ]:
+        if p.exists():
+            artifacts[name] = str(p)
+    return DiscoveryStatusResponse(
+        repo_id=repo_id,
+        created_at=run.get("created_at"),
+        updated_at=run.get("updated_at"),
+        approved=bool(run.get("approved")),
+        approver=run.get("approver"),
+        artifacts=artifacts,
+    )
