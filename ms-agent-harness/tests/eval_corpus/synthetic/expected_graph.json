@@ -15,9 +15,11 @@
      "attrs": {"resource_kind": "secrets_manager_secret",    "resource_name": "webhook/url"}}
   ],
   "edges": [
+    {"src": "orders",        "dst": "dynamodb_table:Orders",              "kind": "reads"},
     {"src": "orders",        "dst": "dynamodb_table:Orders",              "kind": "writes"},
     {"src": "orders",        "dst": "sqs_queue:payments-queue",           "kind": "produces"},
     {"src": "payments",      "dst": "dynamodb_table:Orders",              "kind": "reads"},
+    {"src": "payments",      "dst": "dynamodb_table:Payments",            "kind": "reads"},
     {"src": "payments",      "dst": "dynamodb_table:Payments",            "kind": "writes"},
     {"src": "payments",      "dst": "sns_topic:payment-events",           "kind": "produces"},
     {"src": "notifications", "dst": "secrets_manager_secret:webhook/url", "kind": "reads"}
