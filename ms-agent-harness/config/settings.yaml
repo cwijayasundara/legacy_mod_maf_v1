@@ -16,6 +16,17 @@ models:
   coder: gpt-4o-mini         # Fast execution for code generation
   tester: gpt-4o-mini        # Moderate reasoning for test evaluation
   reviewer: gpt-4o           # Strong reasoning for quality judgment
+  # ── Discovery layer ──
+  repo_scanner: gpt-4o-mini
+  dependency_grapher: gpt-4o-mini
+  brd_extractor: gpt-4o
+  architect: gpt-4o
+  story_decomposer: gpt-4o
+  wave_scheduler: gpt-4o-mini
+  critic_graph: gpt-4o-mini
+  critic_brd: gpt-4o-mini
+  critic_design: gpt-4o-mini
+  critic_story: gpt-4o-mini
 
 # Speed profiles (from Azure Legacy Modernization Agents)
 # Control token budgets, reasoning effort, and parallelism per file complexity
