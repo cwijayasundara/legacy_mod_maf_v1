@@ -102,17 +102,21 @@ def load_prompt(role: str,
     return prompt
 
 
-def create_agent(role: str, tools: list | None = None) -> Agent:
+def create_agent(role: str, tools: list | None = None,
+                 repo_root: str | Path | None = None,
+                 module_path: str | Path | None = None) -> Agent:
     """
     Create an agent for a specific role.
 
     Args:
-        role: One of 'analyzer', 'coder', 'tester', 'reviewer'
+        role: One of 'analyzer', 'coder', 'tester', 'reviewer', discovery roles, etc.
         tools: List of @tool-decorated functions
+        repo_root: Optional repo root; when set, <repo_root>/AGENTS.md is injected.
+        module_path: Optional module dir; when set, <module_path>/AGENTS.md is injected.
     """
     settings = get_settings()
     model = settings.model_for_role(role)
-    prompt = load_prompt(role)
+    prompt = load_prompt(role, repo_root=repo_root, module_path=module_path)
 
     # Inject learned rules
     learned_rules = _load_learned_rules()
