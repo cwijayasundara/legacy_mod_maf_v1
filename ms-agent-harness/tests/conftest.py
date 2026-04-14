@@ -18,8 +18,13 @@ import pytest
 # is a harmless pass-through.  This block runs at import time of conftest.
 # ---------------------------------------------------------------------------
 _af = types.ModuleType("agent_framework")
-_af.tool = lambda **kwargs: (lambda fn: fn)  # @tool(approval_mode=...) -> identity
+_af.tool = lambda **kwargs: (lambda fn: fn)
+_af.Agent = MagicMock(name="agent_framework.Agent")
 sys.modules.setdefault("agent_framework", _af)
+
+_aff = types.ModuleType("agent_framework_foundry")
+_aff.FoundryChatClient = MagicMock(name="agent_framework_foundry.FoundryChatClient")
+sys.modules.setdefault("agent_framework_foundry", _aff)
 
 # Now safe to import project modules
 from agent_harness.config import Settings, SpeedProfile, ChunkingConfig, QualityConfig, RateLimits

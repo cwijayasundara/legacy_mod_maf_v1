@@ -81,6 +81,25 @@ class MigrationRepository:
 
                 CREATE INDEX IF NOT EXISTS idx_runs_module ON migration_runs(module);
                 CREATE INDEX IF NOT EXISTS idx_chunks_module ON chunk_status(module);
+
+                CREATE TABLE IF NOT EXISTS discovery_runs (
+                    repo_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    approved INTEGER DEFAULT 0,
+                    approver TEXT,
+                    approval_comment TEXT,
+                    approved_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS discovery_stage_cache (
+                    repo_id TEXT NOT NULL,
+                    stage_name TEXT NOT NULL,
+                    input_hash TEXT NOT NULL,
+                    artifact_path TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (repo_id, stage_name)
+                );
             """)
         self._initialized = True
 
@@ -204,6 +223,73 @@ class MigrationRepository:
                 (module, module),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ─── Discovery Runs ────────────────────────────────────────────────
+
+    def create_discovery_run(self, repo_id: str):
+        self.initialize()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO discovery_runs
+                   (repo_id, created_at, updated_at, approved)
+                   VALUES (?, ?, ?, 0)""",
+                (repo_id, _now(), _now()),
+            )
+
+    def get_discovery_run(self, repo_id: str) -> dict | None:
+        self.initialize()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM discovery_runs WHERE repo_id = ?", (repo_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def approve_backlog(self, repo_id: str, approver: str, comment: str = ""):
+        self.initialize()
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE discovery_runs
+                   SET approved = 1, approver = ?, approval_comment = ?,
+                       approved_at = ?, updated_at = ?
+                   WHERE repo_id = ?""",
+                (approver, comment, _now(), _now(), repo_id),
+            )
+
+    def is_backlog_approved(self, repo_id: str) -> bool:
+        run = self.get_discovery_run(repo_id)
+        return bool(run and run["approved"])
+
+    # ─── Discovery Stage Cache ─────────────────────────────────────────
+
+    def stage_cache_hit(self, repo_id: str, stage_name: str, input_hash: str) -> bool:
+        self.initialize()
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT input_hash FROM discovery_stage_cache
+                   WHERE repo_id = ? AND stage_name = ?""",
+                (repo_id, stage_name),
+            ).fetchone()
+            return bool(row) and row["input_hash"] == input_hash
+
+    def cache_stage(self, repo_id: str, stage_name: str, input_hash: str, artifact_path: str):
+        self.initialize()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO discovery_stage_cache
+                   (repo_id, stage_name, input_hash, artifact_path, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (repo_id, stage_name, input_hash, artifact_path, _now()),
+            )
+
+    def get_cached_stage_path(self, repo_id: str, stage_name: str) -> str | None:
+        self.initialize()
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT artifact_path FROM discovery_stage_cache
+                   WHERE repo_id = ? AND stage_name = ?""",
+                (repo_id, stage_name),
+            ).fetchone()
+            return row["artifact_path"] if row else None
 
 
 def _now() -> str:
