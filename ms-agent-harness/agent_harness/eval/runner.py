@@ -95,7 +95,7 @@ def _load_canned(corpus: Corpus) -> dict:
 
 
 def _module_side_effect(per_module: dict[str, str]):
-    async def _fn(message: str) -> str:
+    async def _fn(message: str, **_kwargs) -> str:
         for mid, body in per_module.items():
             if f"`{mid}`" in message:
                 return body

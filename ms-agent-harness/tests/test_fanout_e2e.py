@@ -83,13 +83,13 @@ async def test_discover_plan_approve_migrate_repo_e2e(tmp_path, monkeypatch):
         ],
     ).model_dump_json()
 
-    async def _brd_side(message):
+    async def _brd_side(message, **kwargs):
         for mid, body in brd_canned.items():
             if f"`{mid}`" in message:
                 return body
         return "## Business Rules\n- r\n## Error Paths\n- e\n## Side Effects\n- none\n"
 
-    async def _design_side(message):
+    async def _design_side(message, **kwargs):
         for mid, body in design_canned.items():
             if f"`{mid}`" in message:
                 return body

@@ -60,7 +60,9 @@ def create_chat_client(model: str | None = None):
         )
 
 
-def load_prompt(role: str) -> str:
+def load_prompt(role: str,
+                repo_root: str | Path | None = None,
+                module_path: str | Path | None = None) -> str:
     """Load system prompt from prompts/ directory, falling back to discovery/prompts/."""
     for candidate in (PROMPTS_DIR / f"{role}.md", DISCOVERY_PROMPTS_DIR / f"{role}.md"):
         if candidate.exists():
@@ -75,20 +77,46 @@ def load_prompt(role: str) -> str:
     if quality_path.exists():
         prompt += "\n\n" + quality_path.read_text()
 
+    # Inject repo-level AGENTS.md
+    if repo_root:
+        agents_md = Path(repo_root) / "AGENTS.md"
+        if agents_md.is_file():
+            try:
+                prompt += (
+                    f"\n\n## Repo context (AGENTS.md)\n{agents_md.read_text(encoding='utf-8')}"
+                )
+            except OSError as exc:
+                logger.warning("Could not read %s: %s", agents_md, exc)
+
+    # Inject module-level AGENTS.md (overrides repo-level by appearing after).
+    if module_path:
+        mod_md = Path(module_path) / "AGENTS.md"
+        if mod_md.is_file():
+            try:
+                prompt += (
+                    f"\n\n## Module context (AGENTS.md)\n{mod_md.read_text(encoding='utf-8')}"
+                )
+            except OSError as exc:
+                logger.warning("Could not read %s: %s", mod_md, exc)
+
     return prompt
 
 
-def create_agent(role: str, tools: list | None = None) -> Agent:
+def create_agent(role: str, tools: list | None = None,
+                 repo_root: str | Path | None = None,
+                 module_path: str | Path | None = None) -> Agent:
     """
     Create an agent for a specific role.
 
     Args:
-        role: One of 'analyzer', 'coder', 'tester', 'reviewer'
+        role: One of 'analyzer', 'coder', 'tester', 'reviewer', discovery roles, etc.
         tools: List of @tool-decorated functions
+        repo_root: Optional repo root; when set, <repo_root>/AGENTS.md is injected.
+        module_path: Optional module dir; when set, <module_path>/AGENTS.md is injected.
     """
     settings = get_settings()
     model = settings.model_for_role(role)
-    prompt = load_prompt(role)
+    prompt = load_prompt(role, repo_root=repo_root, module_path=module_path)
 
     # Inject learned rules
     learned_rules = _load_learned_rules()

@@ -7,27 +7,25 @@ Read-only: reviews but does NOT modify code.
 from pathlib import Path
 
 from .base import create_agent, run_with_retry
-from .tools import read_file, search_files, list_directory
+from .tools import read_file, search_files, list_directory, validate_bicep
 from .context.chunker import needs_chunking, chunk_file
 
-PROMPT_PATH = Path(__file__).parent / "prompts" / "reviewer.md"
 
-
-def _load_prompt() -> str:
-    """Load the reviewer system prompt from the markdown file."""
-    return PROMPT_PATH.read_text(encoding="utf-8")
-
-
-def create_reviewer():
+def create_reviewer(repo_root=None, module_path=None):
     """Create the reviewer agent with read-only tools."""
     return create_agent(
-        name="reviewer",
-        system_prompt=_load_prompt(),
-        tools=[read_file, search_files, list_directory],
+        role="reviewer",
+        tools=[read_file, search_files, list_directory, validate_bicep],
+        repo_root=repo_root,
+        module_path=module_path,
     )
 
 
-async def review_module(module: str, language: str) -> dict:
+async def review_module(
+    module: str, language: str,
+    repo_root: str | None = None,
+    module_path: str | None = None,
+) -> dict:
     """
     Perform the 8-point quality gate review on a migrated Azure Function module.
 
@@ -42,7 +40,7 @@ async def review_module(module: str, language: str) -> dict:
     Returns:
         Dict with keys: recommendation, confidence, review_path, blocking_issues.
     """
-    agent = create_reviewer()
+    agent = create_reviewer(repo_root=repo_root, module_path=module_path)
 
     analysis_dir = Path("migration-analysis") / module
     analysis_dir.mkdir(parents=True, exist_ok=True)

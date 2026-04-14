@@ -305,3 +305,32 @@ changes.
 
 To add a corpus: drop `tests/eval_corpus/<name>/corpus.yaml` + expected JSONs +
 optional `canned/*` responses. See `tests/eval_corpus/aws_legacy/README.md`.
+
+## Per-repo and per-module agent context (AGENTS.md)
+
+Drop an `AGENTS.md` at the root of the repo being migrated to give every
+agent (discovery + migration) shared context — domain glossary, invariants,
+forbidden/preferred patterns, Azure naming conventions. For module-specific
+overrides, drop a second `AGENTS.md` inside the module's directory.
+
+Injection order (later entries can override earlier ones):
+
+1. Stage prompt (e.g. `prompts/coder.md`).
+2. `prompts/quality-principles.md`.
+3. `config/state/learned-rules.md`.
+4. `config/program.md`.
+5. `<repo_root>/AGENTS.md`.
+6. `<module_path>/AGENTS.md` (migration only — discovery is repo-scoped).
+
+See `templates/AGENTS.md.example` for the conventions.
+
+## Additional agent tools
+
+- `apply_patch(edits)` — atomic batch of search-replace edits. The coder uses
+  this for incremental edits instead of whole-file rewrites. All edits in a
+  batch are validated (each `old_string` matches `expected_count` times)
+  before any file is touched; any failure aborts the batch.
+- `validate_bicep(path)` — transpiles a Bicep file with `az bicep build
+  --stdout`. Returns `VALID` / `INVALID: <stderr>` / `SKIPPED: <reason>`.
+  Used by the reviewer and security_reviewer. When it returns `INVALID`,
+  the reviewer is instructed never to APPROVE without regenerating.

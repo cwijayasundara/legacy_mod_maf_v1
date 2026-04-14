@@ -13,19 +13,10 @@ from .tools.ast_tools import parse_imports, extract_functions, find_aws_dependen
 from .context.complexity_scorer import score_complexity
 from .context.chunker import needs_chunking, chunk_file
 
-PROMPT_PATH = Path(__file__).parent / "prompts" / "analyzer.md"
-
-
-def _load_prompt() -> str:
-    """Load the analyzer system prompt from the markdown file."""
-    return PROMPT_PATH.read_text(encoding="utf-8")
-
-
-def create_analyzer():
+def create_analyzer(repo_root=None, module_path=None):
     """Create the analyzer agent with read-only tools."""
     return create_agent(
-        name="analyzer",
-        system_prompt=_load_prompt(),
+        role="analyzer",
         tools=[
             read_file,
             search_files,
@@ -34,6 +25,8 @@ def create_analyzer():
             extract_functions,
             find_aws_dependencies,
         ],
+        repo_root=repo_root,
+        module_path=module_path,
     )
 
 
@@ -41,13 +34,15 @@ async def analyze_module(
     module: str, language: str, source_dir: str,
     source_paths: list[str] | tuple = (),
     context_paths: list[str] | tuple = (),
+    repo_root: str | None = None,
+    module_path: str | None = None,
 ) -> str:
     """Analyze a Lambda module for migration to Azure Functions.
 
     When source_paths is provided, those files (not a rglob of source_dir)
     are the sole source. context_paths are listed read-only.
     """
-    agent = create_analyzer()
+    agent = create_analyzer(repo_root=repo_root, module_path=module_path)
 
     output_dir = Path("migration-analysis") / module
     output_dir.mkdir(parents=True, exist_ok=True)

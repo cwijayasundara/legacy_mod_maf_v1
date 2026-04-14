@@ -12,15 +12,17 @@ from . import paths
 logger = logging.getLogger("discovery.brd")
 
 
-async def _run_module_agent(message: str) -> str:
+async def _run_module_agent(message: str, repo_root: str | None = None) -> str:
     agent = create_agent(role="brd_extractor",
-                         tools=[read_file, list_directory, search_files])
+                         tools=[read_file, list_directory, search_files],
+                         repo_root=repo_root)
     return await run_with_retry(agent, message)
 
 
-async def _run_system_agent(message: str) -> str:
+async def _run_system_agent(message: str, repo_root: str | None = None) -> str:
     agent = create_agent(role="brd_extractor",
-                         tools=[read_file, list_directory, search_files])
+                         tools=[read_file, list_directory, search_files],
+                         repo_root=repo_root)
     return await run_with_retry(agent, message)
 
 
@@ -41,7 +43,7 @@ async def extract_brds(repo_id: str, repo_root: Path,
             f"## Source\n{sources}\n\n{extra_instructions}\n\n"
             f"Output ONLY the markdown body."
         )
-        body = await _run_module_agent(msg)
+        body = await _run_module_agent(msg, repo_root=str(repo_root))
         brd = ModuleBRD(module_id=m.id, body=body)
         out = paths.module_brd_path(repo_id, m.id)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -53,7 +55,7 @@ async def extract_brds(repo_id: str, repo_root: Path,
         f"## All edges\n{_render_edges(graph.edges)}\n\n"
         "Output ONLY the markdown body."
     )
-    sys_body = await _run_system_agent(sys_msg)
+    sys_body = await _run_system_agent(sys_msg, repo_root=str(repo_root))
     paths.system_brd_path(repo_id).write_text(sys_body, encoding="utf-8")
     return modules, SystemBRD(body=sys_body)
 

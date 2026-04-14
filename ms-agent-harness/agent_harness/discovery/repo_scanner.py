@@ -27,10 +27,11 @@ def _list_tree(root: Path) -> list[str]:
     return out
 
 
-async def _run_agent(message: str) -> str:
+async def _run_agent(message: str, repo_root: str | None = None) -> str:
     """Indirection point so tests can patch a single seam."""
     agent = create_agent(role="repo_scanner",
-                         tools=[read_file, list_directory, search_files])
+                         tools=[read_file, list_directory, search_files],
+                         repo_root=repo_root)
     return await run_with_retry(agent, message)
 
 
@@ -46,7 +47,7 @@ async def scan_repo(repo_id: str, repo_path: str,
         f"{extra_instructions}\n\n"
         f"Return ONLY the JSON object."
     )
-    raw = await _run_agent(msg)
+    raw = await _run_agent(msg, repo_root=str(root))
     inv = Inventory.model_validate_json(_strip_fences(raw))
 
     out_path = paths.inventory_path(repo_id)

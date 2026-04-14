@@ -83,13 +83,13 @@ async def test_e2e_synthetic_repo(tmp_path, monkeypatch):
         ],
     ).model_dump_json()
 
-    async def _module_brd_side_effect(message: str) -> str:
+    async def _module_brd_side_effect(message: str, **kwargs) -> str:
         for mid in brd_canned:
             if f"`{mid}`" in message:
                 return brd_canned[mid]
         return "## Business Rules\n- r\n## Error Paths\n- e\n## Side Effects\n- none\n"
 
-    async def _module_design_side_effect(message: str) -> str:
+    async def _module_design_side_effect(message: str, **kwargs) -> str:
         for mid in design_canned:
             if f"`{mid}`" in message:
                 return design_canned[mid]
