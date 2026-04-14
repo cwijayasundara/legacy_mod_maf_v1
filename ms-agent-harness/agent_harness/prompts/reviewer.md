@@ -127,3 +127,19 @@ Rules from state/learned-rules.md that were relevant to this review.
 - Be specific about issues -- include file:line references
 - Your verdict is final for this iteration. If BLOCKED, the coder gets another attempt.
 - You are independent of the coder. Do not give benefit of the doubt.
+
+## Bicep validation handling
+
+You have access to the `validate_bicep(path)` tool. When the generated migration
+includes Bicep IaC files (typically under `infrastructure/<module>/`), invoke
+this tool on each before settling on a recommendation.
+
+Tool return values and your obligations:
+- `VALID` → no effect. Bicep parsed and type-checked.
+- `INVALID: <stderr>` → you MUST NOT recommend APPROVE. Downgrade to at least
+  CHANGES_REQUESTED and include the stderr verbatim in your review under a
+  `## Bicep validation errors` heading.
+- `SKIPPED: <reason>` → the environment does not have the Azure CLI or Bicep
+  extension available. Note this in the review under
+  `## Bicep validation skipped` but do not treat as a failure — the generated
+  code may still be correct; a separate CI step will validate.
