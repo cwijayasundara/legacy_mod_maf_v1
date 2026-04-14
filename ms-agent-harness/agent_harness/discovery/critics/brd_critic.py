@@ -42,7 +42,8 @@ def critique_brds(modules: list[ModuleBRD], system: SystemBRD,
 
 
 def _section_text(body: str, name: str) -> str:
-    pattern = rf"^##\s+{re.escape(name)}\s*$(.*?)(?=^##\s|\Z)"
+    # Tolerate trailing text in the heading (e.g. "## Side Effects (AWS resources)").
+    pattern = rf"^##\s+{re.escape(name)}\b.*?$(.*?)(?=^##\s|\Z)"
     m = re.search(pattern, body, flags=re.MULTILINE | re.DOTALL)
     return (m.group(1) if m else "").strip()
 

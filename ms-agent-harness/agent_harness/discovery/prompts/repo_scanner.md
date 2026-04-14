@@ -30,8 +30,31 @@ Return ONLY a single JSON object matching this schema (no prose, no fences):
 }
 
 ## Rules
+- Top-level keys MUST be exactly `repo_meta` and `modules`. Do NOT use `repo_path` at the top level.
+- Each module MUST have the keys `id`, `path`, `language`, `handler_entrypoint`, `loc`, `config_files`. Do NOT use `name` in place of `id`.
 - Only include directories that look like deployable Lambda modules.
 - `id` must be unique. Prefer the directory's basename, slugified.
 - Use `read_file`, `list_directory`, `search_files` if you need to inspect files.
 - If you cannot find a `handler` function, OMIT the module — do not guess.
 - Skip `tests/`, `node_modules/`, `.git/`, `__pycache__/`, hidden dirs.
+
+## Concrete example (shape to copy exactly)
+
+{
+  "repo_meta": {
+    "root_path": "/path/to/repo",
+    "total_files": 8,
+    "total_loc": 60,
+    "discovered_at": "2026-04-14T00:00:00Z"
+  },
+  "modules": [
+    {
+      "id": "orders",
+      "path": "orders",
+      "language": "python",
+      "handler_entrypoint": "orders/handler.py",
+      "loc": 14,
+      "config_files": ["orders/requirements.txt"]
+    }
+  ]
+}

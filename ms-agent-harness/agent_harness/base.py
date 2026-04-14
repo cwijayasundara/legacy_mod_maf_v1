@@ -27,6 +27,7 @@ from .config import Settings, load_settings
 logger = logging.getLogger("agents.base")
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+DISCOVERY_PROMPTS_DIR = Path(__file__).parent / "discovery" / "prompts"
 
 _settings: Settings | None = None
 
@@ -60,12 +61,13 @@ def create_chat_client(model: str | None = None):
 
 
 def load_prompt(role: str) -> str:
-    """Load system prompt from prompts/ directory."""
-    prompt_file = PROMPTS_DIR / f"{role}.md"
-    if prompt_file.exists():
-        prompt = prompt_file.read_text()
+    """Load system prompt from prompts/ directory, falling back to discovery/prompts/."""
+    for candidate in (PROMPTS_DIR / f"{role}.md", DISCOVERY_PROMPTS_DIR / f"{role}.md"):
+        if candidate.exists():
+            prompt = candidate.read_text()
+            break
     else:
-        logger.warning("Prompt file not found: %s", prompt_file)
+        logger.warning("Prompt file not found for role %s", role)
         prompt = f"You are a migration {role} agent."
 
     # Inject quality principles into every agent's prompt

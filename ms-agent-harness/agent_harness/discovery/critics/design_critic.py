@@ -40,6 +40,7 @@ def critique_designs(designs: list[ModuleDesign], system: SystemDesign,
 
 
 def _section_text(body: str, name: str) -> str:
-    m = re.search(rf"^##\s+{re.escape(name)}\s*$(.*?)(?=^##\s|\Z)",
+    # Tolerate trailing text in the heading (e.g. "## State Mapping (one entry per ...)").
+    m = re.search(rf"^##\s+{re.escape(name)}\b.*?$(.*?)(?=^##\s|\Z)",
                   body, flags=re.MULTILINE | re.DOTALL)
     return (m.group(1) if m else "").strip()

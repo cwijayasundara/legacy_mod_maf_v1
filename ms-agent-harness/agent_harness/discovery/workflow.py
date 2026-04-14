@@ -8,12 +8,33 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from pydantic import ValidationError
+
 from ..persistence.repository import MigrationRepository
 from .artifacts import (
     Backlog, CriticReport, DependencyGraph, Inventory, Stories,
     ModuleBRD, SystemBRD, ModuleDesign, SystemDesign,
 )
 from . import paths
+
+
+_SENTINEL = "__PARSE_ERROR__:"
+
+
+def _parse_error_payload(exc: ValidationError) -> str:
+    return _SENTINEL + json.dumps(exc.errors()[:10])
+
+
+def _parse_error_report(result: str, schema_hint: str) -> CriticReport | None:
+    if not result.startswith(_SENTINEL):
+        return None
+    errs = json.loads(result[len(_SENTINEL):])
+    reasons = [f"{'/'.join(str(l) for l in e.get('loc', []))}: {e.get('msg', '')}" for e in errs]
+    return CriticReport(
+        verdict="FAIL",
+        reasons=["LLM output failed schema validation"] + reasons,
+        suggestions=[f"Re-emit JSON matching this schema exactly: {schema_hint}"],
+    )
 
 logger = logging.getLogger("discovery.workflow")
 
@@ -104,10 +125,19 @@ async def run_discovery(repo_id: str, repo_path: str,
     inv_hash = hash_inputs(repo_id, "scanner", [str(root)])
 
     async def _produce_scanner(feedback: str) -> str:
-        inv = await repo_scanner.scan_repo(repo_id, str(root), extra_instructions=feedback)
-        return inv.model_dump_json()
+        try:
+            inv = await repo_scanner.scan_repo(repo_id, str(root), extra_instructions=feedback)
+            return inv.model_dump_json()
+        except ValidationError as exc:
+            return _parse_error_payload(exc)
 
     def _critic_scanner(result: str, ctx: dict) -> CriticReport:
+        bad = _parse_error_report(result, schema_hint=(
+            "{repo_meta: {root_path, total_files, total_loc, discovered_at}, "
+            "modules: [{id, path, language, handler_entrypoint, loc, config_files}]}"
+        ))
+        if bad:
+            return bad
         inv = Inventory.model_validate_json(result)
         return repo_scanner.sanity_check(inv, repo_root=root)
 
@@ -119,11 +149,18 @@ async def run_discovery(repo_id: str, repo_path: str,
     g_hash = hash_inputs(repo_id, "grapher", [raw_inv])
 
     async def _produce_grapher(feedback: str) -> str:
-        g = await dependency_grapher.build_graph(repo_id, root, inventory,
-                                                 extra_instructions=feedback)
-        return g.model_dump_json()
+        try:
+            g = await dependency_grapher.build_graph(repo_id, root, inventory,
+                                                     extra_instructions=feedback)
+            return g.model_dump_json()
+        except ValidationError as exc:
+            return _parse_error_payload(exc)
 
     def _critic_grapher(result: str, ctx: dict) -> CriticReport:
+        bad = _parse_error_report(result,
+            schema_hint="{nodes:[{id,kind,attrs}], edges:[{src,dst,kind}]}")
+        if bad:
+            return bad
         g = DependencyGraph.model_validate_json(result)
         return critique_graph(g, root, inventory)
 
@@ -178,13 +215,20 @@ async def run_discovery(repo_id: str, repo_path: str,
                           json.dumps([d.model_dump() for d in cached_designs])])
 
     async def _produce_stories(feedback: str) -> str:
-        s = await story_decomposer.decompose(
-            repo_id, inventory, graph, cached_brds, cached_sys,
-            cached_designs, cached_sys_design, extra_instructions=feedback,
-        )
-        return s.model_dump_json()
+        try:
+            s = await story_decomposer.decompose(
+                repo_id, inventory, graph, cached_brds, cached_sys,
+                cached_designs, cached_sys_design, extra_instructions=feedback,
+            )
+            return s.model_dump_json()
+        except ValidationError as exc:
+            return _parse_error_payload(exc)
 
     def _critic_stories(result: str, ctx: dict) -> CriticReport:
+        bad = _parse_error_report(result,
+            schema_hint="{epics:[{id,module_id,title,story_ids}], stories:[{id,epic_id,title,description,acceptance_criteria:[{text}],depends_on,blocks,estimate}]}")
+        if bad:
+            return bad
         s = Stories.model_validate_json(result)
         return critique_stories(s, inventory)
 

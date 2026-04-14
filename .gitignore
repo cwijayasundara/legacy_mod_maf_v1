@@ -1,6 +1,8 @@
 # Worktrees
 .worktrees/
 
+.aws_legacy/
+
 # Dependencies
 node_modules/
 __pycache__/
@@ -39,6 +41,7 @@ htmlcov/
 # Migration runtime outputs
 migration-analysis/*/codex-output.log
 migrated_code/
+ms-agent-harness/discovery/
 
 # Azure Functions local
 local.settings.json
