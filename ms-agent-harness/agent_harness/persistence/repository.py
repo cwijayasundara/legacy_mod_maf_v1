@@ -237,6 +237,7 @@ class MigrationRepository:
             )
 
     def get_discovery_run(self, repo_id: str) -> dict | None:
+        self.initialize()
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM discovery_runs WHERE repo_id = ?", (repo_id,)
@@ -244,6 +245,7 @@ class MigrationRepository:
             return dict(row) if row else None
 
     def approve_backlog(self, repo_id: str, approver: str, comment: str = ""):
+        self.initialize()
         with self._connect() as conn:
             conn.execute(
                 """UPDATE discovery_runs
@@ -260,6 +262,7 @@ class MigrationRepository:
     # ─── Discovery Stage Cache ─────────────────────────────────────────
 
     def stage_cache_hit(self, repo_id: str, stage_name: str, input_hash: str) -> bool:
+        self.initialize()
         with self._connect() as conn:
             row = conn.execute(
                 """SELECT input_hash FROM discovery_stage_cache
@@ -279,6 +282,7 @@ class MigrationRepository:
             )
 
     def get_cached_stage_path(self, repo_id: str, stage_name: str) -> str | None:
+        self.initialize()
         with self._connect() as conn:
             row = conn.execute(
                 """SELECT artifact_path FROM discovery_stage_cache
