@@ -17,10 +17,11 @@ from . import paths
 logger = logging.getLogger("discovery.grapher")
 
 
-async def _run_agent(message: str) -> str:
+async def _run_agent(message: str, repo_root: str | None = None) -> str:
     """LLM invocation seam — patched in tests."""
     agent = create_agent(role="dependency_grapher",
-                         tools=[read_file, list_directory, search_files])
+                         tools=[read_file, list_directory, search_files],
+                         repo_root=repo_root)
     return await run_with_retry(agent, message)
 
 
@@ -72,7 +73,7 @@ async def build_graph(repo_id: str, repo_root: Path,
             "Return JSON: [{\"module\": \"...\", \"resource_kind\": \"...\", \"resource_name\": \"...\", \"access\": \"reads|writes|produces|consumes|invokes\"}]\n\n"
             f"{listing}\n\n{extra_instructions}"
         )
-        raw = await _run_agent(msg)
+        raw = await _run_agent(msg, repo_root=str(repo_root))
         try:
             for entry in json.loads(_strip_fences(raw)):
                 node = builder.add_resource(entry["resource_kind"], entry["resource_name"])

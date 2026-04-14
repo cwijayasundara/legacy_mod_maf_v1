@@ -13,16 +13,18 @@ from . import paths
 logger = logging.getLogger("discovery.stories")
 
 
-async def _run_agent(message: str) -> str:
+async def _run_agent(message: str, repo_root: str | None = None) -> str:
     agent = create_agent(role="story_decomposer",
-                         tools=[read_file, list_directory, search_files])
+                         tools=[read_file, list_directory, search_files],
+                         repo_root=repo_root)
     return await run_with_retry(agent, message)
 
 
 async def decompose(repo_id: str, inventory: Inventory, graph: DependencyGraph,
                     module_brds: list[ModuleBRD], system_brd: SystemBRD,
                     module_designs: list[ModuleDesign], system_design: SystemDesign,
-                    extra_instructions: str = "") -> Stories:
+                    extra_instructions: str = "",
+                    repo_root: str | None = None) -> Stories:
     msg = (
         "Decompose the migration into epics and stories. Return ONLY a JSON object "
         "matching the Stories schema with keys: epics, stories.\n\n"
@@ -39,7 +41,7 @@ async def decompose(repo_id: str, inventory: Inventory, graph: DependencyGraph,
         "- depends_on must reference story ids that exist in this output.\n"
         "- The dependency subgraph must be acyclic.\n"
     )
-    raw = await _run_agent(msg)
+    raw = await _run_agent(msg, repo_root=str(repo_root) if repo_root else None)
     stories = Stories.model_validate_json(_strip_fences(raw))
     out = paths.stories_path(repo_id)
     out.parent.mkdir(parents=True, exist_ok=True)

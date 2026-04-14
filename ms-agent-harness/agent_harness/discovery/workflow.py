@@ -197,7 +197,7 @@ async def run_discovery(repo_id: str, repo_path: str,
         nonlocal cached_designs, cached_sys_design
         cached_designs, cached_sys_design = await architect.design(
             repo_id, inventory, graph, cached_brds, cached_sys,
-            extra_instructions=feedback,
+            extra_instructions=feedback, repo_root=str(root),
         )
         return json.dumps({"modules": [d.model_dump() for d in cached_designs],
                            "system": cached_sys_design.model_dump()})
@@ -219,6 +219,7 @@ async def run_discovery(repo_id: str, repo_path: str,
             s = await story_decomposer.decompose(
                 repo_id, inventory, graph, cached_brds, cached_sys,
                 cached_designs, cached_sys_design, extra_instructions=feedback,
+                repo_root=str(root),
             )
             return s.model_dump_json()
         except ValidationError as exc:

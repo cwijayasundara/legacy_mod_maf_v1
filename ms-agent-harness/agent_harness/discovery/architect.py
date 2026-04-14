@@ -13,21 +13,25 @@ from . import paths
 logger = logging.getLogger("discovery.architect")
 
 
-async def _run_module_agent(message: str) -> str:
+async def _run_module_agent(message: str, repo_root: str | None = None) -> str:
     agent = create_agent(role="architect",
-                         tools=[read_file, list_directory, search_files])
+                         tools=[read_file, list_directory, search_files],
+                         repo_root=repo_root)
     return await run_with_retry(agent, message)
 
 
-async def _run_system_agent(message: str) -> str:
+async def _run_system_agent(message: str, repo_root: str | None = None) -> str:
     agent = create_agent(role="architect",
-                         tools=[read_file, list_directory, search_files])
+                         tools=[read_file, list_directory, search_files],
+                         repo_root=repo_root)
     return await run_with_retry(agent, message)
 
 
 async def design(repo_id: str, inventory: Inventory, graph: DependencyGraph,
                  module_brds: list[ModuleBRD], system_brd: SystemBRD,
-                 extra_instructions: str = "") -> tuple[list[ModuleDesign], SystemDesign]:
+                 extra_instructions: str = "",
+                 repo_root: str | None = None) -> tuple[list[ModuleDesign], SystemDesign]:
+    _repo_root = str(repo_root) if repo_root else None
     designs: list[ModuleDesign] = []
     by_id = {b.module_id: b for b in module_brds}
 
@@ -47,7 +51,7 @@ async def design(repo_id: str, inventory: Inventory, graph: DependencyGraph,
             f"## Module edges\n" + "\n".join(f"- {e.src} -[{e.kind}]-> {e.dst}" for e in edges)
             + f"\n\n{extra_instructions}\n\nOutput ONLY the markdown body."
         )
-        body = await _run_module_agent(msg)
+        body = await _run_module_agent(msg, repo_root=_repo_root)
         d = ModuleDesign(module_id=m.id, body=body)
         out = paths.module_design_path(repo_id, m.id)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -59,6 +63,6 @@ async def design(repo_id: str, inventory: Inventory, graph: DependencyGraph,
         "and Shared Resource Migration Ordering.\n\n"
         f"## System BRD\n{system_brd.body}\n\nOutput ONLY the markdown body."
     )
-    sys_body = await _run_system_agent(sys_msg)
+    sys_body = await _run_system_agent(sys_msg, repo_root=_repo_root)
     paths.system_design_path(repo_id).write_text(sys_body, encoding="utf-8")
     return designs, SystemDesign(body=sys_body)
