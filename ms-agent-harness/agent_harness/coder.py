@@ -101,6 +101,8 @@ async def migrate_module(
     source_dir: str,
     analysis_path: str,
     attempt: int = 1,
+    source_paths: list[str] | tuple = (),
+    context_paths: list[str] | tuple = (),
 ) -> str:
     """
     Perform TDD-first migration of a Lambda module to Azure Functions.
@@ -133,22 +135,35 @@ async def migrate_module(
     if contract_path.exists():
         contract_content = contract_path.read_text(encoding="utf-8")
 
-    # Read source files, handling chunking
-    source_path = Path(source_dir)
-    file_contents = []
-    for fpath in sorted(source_path.rglob("*")):
-        if fpath.is_file() and not fpath.name.startswith("."):
-            if needs_chunking(fpath):
-                chunks = chunk_file(fpath)
-                for i, chunk in enumerate(chunks):
-                    file_contents.append(
-                        f"--- {fpath} (chunk {i + 1}/{len(chunks)}) ---\n{chunk}"
-                    )
-            else:
-                content = fpath.read_text(encoding="utf-8", errors="replace")
-                file_contents.append(f"--- {fpath} ---\n{content}")
+    # Gather source files to migrate.
+    src_blocks: list[str] = []
+    targets = [Path(p) for p in source_paths] if source_paths else [
+        p for p in Path(source_dir).rglob("*") if p.is_file() and not p.name.startswith(".")
+    ]
+    for p in targets:
+        if not p.is_file():
+            continue
+        if needs_chunking(p):
+            for i, chunk in enumerate(chunk_file(p)):
+                src_blocks.append(f"--- {p} (chunk {i + 1}) ---\n{chunk}")
+        else:
+            src_blocks.append(
+                f"--- {p} ---\n{p.read_text(encoding='utf-8', errors='replace')}"
+            )
 
-    source_listing = "\n\n".join(file_contents)
+    if context_paths:
+        src_blocks.append(
+            "\n## CONTEXT (read-only — anti-corruption boundary)\n"
+            "You MAY import from these files, but MUST NOT modify or re-create them.\n"
+        )
+        for cpath in context_paths:
+            p = Path(cpath)
+            if p.is_file():
+                src_blocks.append(
+                    f"--- {p} (read-only) ---\n{p.read_text(encoding='utf-8', errors='replace')}"
+                )
+
+    source_listing = "\n\n".join(src_blocks)
 
     # Read failure report if this is a retry attempt
     failure_context = ""
