@@ -278,3 +278,30 @@ Each backlog item carries `source_paths` (the handler file to migrate) and
 is not migrating — passed to the agent as read-only anti-corruption
 boundary). This lets the pipeline ingest arbitrary repo layouts without the
 legacy `src/lambda/<module>/` staging requirement.
+
+## Evaluation framework
+
+Regression-detect the discovery pipeline against golden corpora.
+
+- `python -m agent_harness.eval run --corpus=synthetic --tier=deterministic` — fast,
+  no LLM calls, scores the canned pipeline output.
+- `python -m agent_harness.eval run --tier=real_llm` — runs the live pipeline
+  against every corpus under `tests/eval_corpus/`. Costs ~$0.10–$1/run.
+- `python -m agent_harness.eval report <run_dir>` — prints the markdown report.
+
+Each run lands at `eval-results/<timestamp>-<corpus>/report.{json,md}`. Exit code
+is `0` if every stage passes its threshold, `1` if any fail, `2` on setup error.
+
+Stage scoring:
+- `inventory` — exact-match on module IDs, threshold 1.0.
+- `graph` — Jaccard on edge triples + AWS resource coverage, threshold 0.9.
+- `stories` — epic/count/dep-edge/AC sub-scores averaged, threshold 0.85.
+- `brd` — structural (required sections) + LLM-as-judge rubric, threshold 0.7.
+- `design` — structural + LLM-as-judge rubric, threshold 0.7.
+
+Rubrics live at `agent_harness/eval/rubrics/*.yaml`. Each rubric declares its
+judge model (defaults to `gpt-5.4-mini`); override per-rubric without code
+changes.
+
+To add a corpus: drop `tests/eval_corpus/<name>/corpus.yaml` + expected JSONs +
+optional `canned/*` responses. See `tests/eval_corpus/aws_legacy/README.md`.
