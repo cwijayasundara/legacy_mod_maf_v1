@@ -30,7 +30,7 @@ class ModuleRecord(BaseModel):
 
 
 class Inventory(BaseModel):
-    repo_meta: RepoMeta | dict
+    repo_meta: RepoMeta
     modules: list[ModuleRecord]
 
 
