@@ -29,6 +29,26 @@ from .quality.code_quality import check_directory
 logger = logging.getLogger("pipeline")
 
 
+def _common_ancestor(paths: list[Path]) -> Path:
+    """Return the deepest directory that is an ancestor of every path.
+
+    Falls back to `Path('/')` in the pathological case of paths from
+    different roots.
+    """
+    resolved = [p.resolve() for p in paths if p]
+    if not resolved:
+        return Path("/")
+    if len(resolved) == 1:
+        return resolved[0].parent if resolved[0].is_file() else resolved[0]
+    ancestors = set(resolved[0].parents) | {resolved[0] if resolved[0].is_dir() else resolved[0].parent}
+    for p in resolved[1:]:
+        pp = set(p.parents) | {p if p.is_dir() else p.parent}
+        ancestors &= pp
+    if not ancestors:
+        return Path("/")
+    return max(ancestors, key=lambda x: len(x.parts))
+
+
 @dataclass
 class PipelineResult:
     """Result of a migration pipeline run."""
@@ -99,6 +119,15 @@ class MigrationPipeline:
         logger.info("Pipeline starting: %s (%s)", module, language)
         run_id = self.repo.start_run(module, language, work_item_id)
 
+        # Derive repo_root + module_path for AGENTS.md injection (sub-project D.1).
+        if source_paths:
+            module_path = str(Path(source_paths[0]).resolve().parent)
+            all_paths = [Path(p) for p in list(source_paths) + list(context_paths)]
+            repo_root = str(_common_ancestor(all_paths))
+        else:
+            module_path = os.path.join(self.project_root, "src", "lambda", module)
+            repo_root = self.project_root
+
         source_dir = os.path.join(self.project_root, "src", "lambda", module)
         output_dir = os.path.join(self.project_root, "migration-analysis", module)
         os.makedirs(output_dir, exist_ok=True)
@@ -119,6 +148,7 @@ class MigrationPipeline:
                 analysis = await analyze_module(
                     module=module, language=language, source_dir=source_dir,
                     source_paths=source_paths, context_paths=context_paths,
+                    repo_root=repo_root, module_path=module_path,
                 )
                 self.repo.cache_analysis(
                     module,
@@ -147,6 +177,7 @@ class MigrationPipeline:
                     module=module, language=language, source_dir=source_dir,
                     analysis_path=analysis, attempt=attempt,
                     source_paths=source_paths, context_paths=context_paths,
+                    repo_root=repo_root, module_path=module_path,
                 )
                 gates_passed.append(3) if 3 not in gates_passed else None
 
@@ -156,6 +187,7 @@ class MigrationPipeline:
                     module=module, language=language, contract=contract,
                     attempt=attempt,
                     source_paths=source_paths, context_paths=context_paths,
+                    repo_root=repo_root, module_path=module_path,
                 )
 
                 if "PASS" in eval_result.upper():
@@ -205,7 +237,10 @@ class MigrationPipeline:
 
             # ─── Gate 6: Reviewer ──────────────────────────────────────
             logger.info("[Gate 6] Running reviewer for %s", module)
-            review_result = await review_module(module, language, contract)
+            review_result = await review_module(
+                module=module, language=language,
+                repo_root=repo_root, module_path=module_path,
+            )
 
             approved = "APPROVE" in review_result.get("recommendation", "").upper()
             score = review_result.get("confidence_score", 0)
@@ -223,7 +258,10 @@ class MigrationPipeline:
 
             # ─── Gate 7: Security Review ──────────────────────────────────────
             logger.info("[Gate 7] Running security reviewer for %s", module)
-            security_result = await security_review(module, language)
+            security_result = await security_review(
+                module=module, language=language,
+                repo_root=repo_root, module_path=module_path,
+            )
             if security_result["recommendation"] == "BLOCKED":
                 gates_failed.append(7)
             else:
