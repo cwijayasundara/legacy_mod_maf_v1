@@ -78,6 +78,10 @@ class MigrationRequest(BaseModel):
     title: str = Field(default="")
     description: str = Field(default="")
     acceptance_criteria: str = Field(default="")
+    source_paths: list[str] = Field(default_factory=list,
+        description="Optional explicit source paths. When provided, bypasses src/lambda/<module>/ lookup.")
+    context_paths: list[str] = Field(default_factory=list,
+        description="Optional read-only context paths shown to the migrator.")
 
 class MigrationResponse(BaseModel):
     status: str
@@ -149,12 +153,27 @@ async def status_all():
 def _validate(req: MigrationRequest):
     if req.language not in {"python", "node", "java", "csharp"}:
         raise HTTPException(400, f"Invalid language: {req.language}")
+    if req.source_paths:
+        for p in req.source_paths:
+            if not os.path.exists(p):
+                raise HTTPException(404, f"source path not found: {p}")
+        for p in req.context_paths:
+            if not os.path.exists(p):
+                raise HTTPException(404, f"context path not found: {p}")
+        return
+    # Legacy behaviour.
     source = os.path.join(PROJECT_ROOT, "src", "lambda", req.module)
     if not os.path.isdir(source):
         raise HTTPException(404, f"Lambda source not found at src/lambda/{req.module}/")
 
 
 async def _run_pipeline(req: MigrationRequest) -> MigrationResponse:
+    if _pipeline is None:
+        logger.warning("Pipeline not initialized; skipping background run for %s", req.module)
+        return MigrationResponse(
+            status="skipped", module=req.module, work_item_id=req.work_item_id,
+            message="pipeline not initialized",
+        )
     async with _semaphore:
         result: PipelineResult = await _pipeline.run(
             module=req.module,
