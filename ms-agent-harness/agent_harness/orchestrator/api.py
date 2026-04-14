@@ -32,9 +32,10 @@ from agent_harness.orchestrator.ado_client import AdoClient
 from agent_harness.discovery import workflow as discovery_workflow
 from agent_harness.discovery import paths as discovery_paths
 from agent_harness.persistence.repository import MigrationRepository
+from agent_harness import observability
+from agent_harness.config import load_settings
 
 logger = logging.getLogger("orchestrator")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 PROJECT_ROOT = os.environ.get("PROJECT_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_MIGRATIONS", "3"))
@@ -48,6 +49,7 @@ _discovery_repo: MigrationRepository = MigrationRepository()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _pipeline, _ado
+    observability.init_logging(os.environ.get("LOG_FORMAT", "text"))
     _pipeline = MigrationPipeline(project_root=PROJECT_ROOT)
     await _pipeline.initialize()
     _ado = AdoClient(
@@ -119,33 +121,53 @@ async def health():
 @app.post("/migrate", response_model=MigrationResponse)
 async def migrate_async(req: MigrationRequest, bg: BackgroundTasks):
     """Start migration in background. Returns immediately."""
-    _validate(req)
-    bg.add_task(_run_pipeline, req)
-    return MigrationResponse(
-        status="accepted", module=req.module, work_item_id=req.work_item_id,
-        message=f"Migration queued for {req.module} ({req.language})",
-    )
+    observability.new_trace("migrate")
+    observability.start_run(load_settings().cost.per_run_token_cap)
+    try:
+        _validate(req)
+        bg.add_task(_run_pipeline, req)
+        return MigrationResponse(
+            status="accepted", module=req.module, work_item_id=req.work_item_id,
+            message=f"Migration queued for {req.module} ({req.language})",
+        )
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
 
 
 @app.post("/migrate/sync", response_model=MigrationResponse)
 async def migrate_sync(req: MigrationRequest):
     """Run migration synchronously (blocks until complete). For demos."""
+    observability.new_trace("migrate-sync")
+    observability.start_run(load_settings().cost.per_run_token_cap)
     _validate(req)
-    return await _run_pipeline(req)
+    try:
+        return await _run_pipeline(req)
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
 
 
 @app.get("/status/{module}", response_model=StatusResponse)
 async def status(module: str):
-    progress = await _pipeline.state.get_module_progress(module) if _pipeline else None
-    if not progress:
-        raise HTTPException(404, f"No data for module '{module}'")
-    return StatusResponse(module=module, **progress.__dict__)
+    observability.new_trace("status")
+    observability.start_run(load_settings().cost.per_run_token_cap)
+    try:
+        progress = await _pipeline.state.get_module_progress(module) if _pipeline else None
+        if not progress:
+            raise HTTPException(404, f"No data for module '{module}'")
+        return StatusResponse(module=module, **progress.__dict__)
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
 
 
 @app.get("/status", response_model=list[StatusResponse])
 async def status_all():
-    items = await _pipeline.state.get_all_progress() if _pipeline else []
-    return [StatusResponse(module=p.module, **p.__dict__) for p in items]
+    observability.new_trace("status-list")
+    observability.start_run(load_settings().cost.per_run_token_cap)
+    try:
+        items = await _pipeline.state.get_all_progress() if _pipeline else []
+        return [StatusResponse(module=p.module, **p.__dict__) for p in items]
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
 
 
 # ─── Internal ──────────────────────────────────────────────────────────────
@@ -247,12 +269,16 @@ class DiscoveryStatusResponse(BaseModel):
 
 @app.post("/discover", response_model=DiscoverResponse)
 async def discover(req: DiscoverRequest):
+    observability.new_trace("discover")
+    observability.start_run(load_settings().cost.per_run_token_cap)
     if not os.path.isdir(req.repo_path):
         raise HTTPException(404, f"repo_path not found: {req.repo_path}")
     try:
         result = await discovery_workflow.run_discovery(
             repo_id=req.repo_id, repo_path=req.repo_path, repo=_discovery_repo,
         )
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
     except RuntimeError as e:
         return DiscoverResponse(status="blocked", repo_id=req.repo_id, message=str(e))
     return DiscoverResponse(
@@ -263,8 +289,12 @@ async def discover(req: DiscoverRequest):
 
 @app.post("/plan", response_model=PlanResponse)
 async def plan(req: PlanRequest):
+    observability.new_trace("plan")
+    observability.start_run(load_settings().cost.per_run_token_cap)
     try:
         backlog = await discovery_workflow.run_planning(req.repo_id, _discovery_repo)
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
     except FileNotFoundError as e:
         raise HTTPException(409, str(e))
     return PlanResponse(
@@ -276,35 +306,45 @@ async def plan(req: PlanRequest):
 
 @app.post("/approve/backlog/{repo_id}")
 async def approve_backlog(repo_id: str, req: ApproveRequest):
-    run = _discovery_repo.get_discovery_run(repo_id)
-    if run is None:
-        raise HTTPException(404, f"no discovery run for repo_id={repo_id}")
-    _discovery_repo.approve_backlog(repo_id, approver=req.approver, comment=req.comment)
-    return {"repo_id": repo_id, "approved": True}
+    observability.new_trace("approve")
+    observability.start_run(load_settings().cost.per_run_token_cap)
+    try:
+        run = _discovery_repo.get_discovery_run(repo_id)
+        if run is None:
+            raise HTTPException(404, f"no discovery run for repo_id={repo_id}")
+        _discovery_repo.approve_backlog(repo_id, approver=req.approver, comment=req.comment)
+        return {"repo_id": repo_id, "approved": True}
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
 
 
 @app.get("/discover/{repo_id}", response_model=DiscoveryStatusResponse)
 async def get_discover(repo_id: str):
-    run = _discovery_repo.get_discovery_run(repo_id)
-    if run is None:
-        raise HTTPException(404, f"no discovery run for repo_id={repo_id}")
-    artifacts = {}
-    for name, p in [
-        ("inventory", discovery_paths.inventory_path(repo_id)),
-        ("graph", discovery_paths.graph_path(repo_id)),
-        ("stories", discovery_paths.stories_path(repo_id)),
-        ("backlog", discovery_paths.backlog_path(repo_id)),
-    ]:
-        if p.exists():
-            artifacts[name] = str(p)
-    return DiscoveryStatusResponse(
-        repo_id=repo_id,
-        created_at=run.get("created_at"),
-        updated_at=run.get("updated_at"),
-        approved=bool(run.get("approved")),
-        approver=run.get("approver"),
-        artifacts=artifacts,
-    )
+    observability.new_trace("discover-status")
+    observability.start_run(load_settings().cost.per_run_token_cap)
+    try:
+        run = _discovery_repo.get_discovery_run(repo_id)
+        if run is None:
+            raise HTTPException(404, f"no discovery run for repo_id={repo_id}")
+        artifacts = {}
+        for name, p in [
+            ("inventory", discovery_paths.inventory_path(repo_id)),
+            ("graph", discovery_paths.graph_path(repo_id)),
+            ("stories", discovery_paths.stories_path(repo_id)),
+            ("backlog", discovery_paths.backlog_path(repo_id)),
+        ]:
+            if p.exists():
+                artifacts[name] = str(p)
+        return DiscoveryStatusResponse(
+            repo_id=repo_id,
+            created_at=run.get("created_at"),
+            updated_at=run.get("updated_at"),
+            approved=bool(run.get("approved")),
+            approver=run.get("approver"),
+            artifacts=artifacts,
+        )
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
 
 
 # ─── Migrate-repo (fan-out) ───────────────────────────────────────────────
@@ -354,27 +394,36 @@ def _assert_approved_or_409(repo_id: str) -> None:
 
 @app.post("/migrate-repo", response_model=MigrateRepoAcceptedBody)
 async def migrate_repo_async(req: MigrateRepoRequest, bg: BackgroundTasks):
-    _assert_approved_or_409(req.repo_id)
+    observability.new_trace("migrate-repo")
+    observability.start_run(load_settings().cost.per_run_token_cap)
+    try:
+        _assert_approved_or_409(req.repo_id)
 
-    async def _run():
-        try:
-            await _fanout.migrate_repo(repo_id=req.repo_id,
-                                        repo=_discovery_repo,
-                                        pipeline=_pipeline)
-        except Exception:
-            logger.exception("migrate_repo background task failed")
+        async def _run():
+            try:
+                await _fanout.migrate_repo(repo_id=req.repo_id,
+                                            repo=_discovery_repo,
+                                            pipeline=_pipeline)
+            except Exception:
+                logger.exception("migrate_repo background task failed")
 
-    bg.add_task(_run)
-    return MigrateRepoAcceptedBody(repo_id=req.repo_id)
+        bg.add_task(_run)
+        return MigrateRepoAcceptedBody(repo_id=req.repo_id)
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
 
 
 @app.post("/migrate-repo/sync", response_model=MigrateRepoResultBody)
 async def migrate_repo_sync(req: MigrateRepoRequest):
+    observability.new_trace("migrate-repo-sync")
+    observability.start_run(load_settings().cost.per_run_token_cap)
     _assert_approved_or_409(req.repo_id)
     try:
         result = await _fanout.migrate_repo(
             repo_id=req.repo_id, repo=_discovery_repo, pipeline=_pipeline,
         )
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     return MigrateRepoResultBody(
@@ -385,13 +434,18 @@ async def migrate_repo_sync(req: MigrateRepoRequest):
 
 @app.get("/migrate-repo/{repo_id}", response_model=MigrateRepoRunBody)
 async def get_migrate_repo(repo_id: str):
-    run = _discovery_repo.get_migrate_repo_run(repo_id)
-    if run is None:
-        raise HTTPException(404, f"no migrate-repo run for {repo_id}")
-    return MigrateRepoRunBody(
-        repo_id=repo_id, id=run.get("id"),
-        status=run.get("status"),
-        started_at=run.get("started_at"),
-        completed_at=run.get("completed_at"),
-        modules=[MigrateRepoModuleStatus(**m) for m in run.get("modules", [])],
-    )
+    observability.new_trace("migrate-repo-status")
+    observability.start_run(load_settings().cost.per_run_token_cap)
+    try:
+        run = _discovery_repo.get_migrate_repo_run(repo_id)
+        if run is None:
+            raise HTTPException(404, f"no migrate-repo run for {repo_id}")
+        return MigrateRepoRunBody(
+            repo_id=repo_id, id=run.get("id"),
+            status=run.get("status"),
+            started_at=run.get("started_at"),
+            completed_at=run.get("completed_at"),
+            modules=[MigrateRepoModuleStatus(**m) for m in run.get("modules", [])],
+        )
+    except observability.TokenBudgetExceeded as exc:
+        raise HTTPException(402, str(exc))
