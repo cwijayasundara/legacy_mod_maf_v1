@@ -31,9 +31,13 @@ def parse_imports(path: str) -> list[Import]:
     """Return every import statement in the file.
 
     `from .a.b import x` → module = '.a.b'; `from ..p import y` → '..p'.
+    Returns [] for files that fail to parse (e.g. Py2 syntax).
     """
     src = Path(path).read_text(encoding="utf-8", errors="replace")
-    tree = ast.parse(src, filename=path)
+    try:
+        tree = ast.parse(src, filename=path)
+    except SyntaxError:
+        return []
     out: list[Import] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -59,9 +63,15 @@ _NAME_KWARGS = {
 
 
 def extract_boto3_calls(path: str) -> list[Boto3Call]:
-    """Find every boto3/aioboto3 call site and return service+method+name."""
+    """Find every boto3/aioboto3 call site and return service+method+name.
+
+    Returns [] for files that fail to parse (e.g. Py2 syntax).
+    """
     src = Path(path).read_text(encoding="utf-8", errors="replace")
-    tree = ast.parse(src, filename=path)
+    try:
+        tree = ast.parse(src, filename=path)
+    except SyntaxError:
+        return []
 
     service_of: dict[str, str] = {}
     # Walk in source order so propagated assignments see prior bindings.
