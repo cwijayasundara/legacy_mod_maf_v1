@@ -245,3 +245,15 @@ See `example/README.md` for a step-by-step walkthrough.
 | Quality enforcement | Node.js hooks (7 scripts) | Python functions in `quality/` package |
 | Dependencies | Node.js + Codex CLI + Python | Pure Python |
 | Container size | ~1.2GB | ~400MB |
+
+## Discovery & Planning Endpoints
+
+For multi-module repos, run discovery first to produce a wave-ordered backlog:
+
+- `POST /discover {repo_id, repo_path}` — inventory → graph → BRDs → designs → stories.
+- `POST /plan {repo_id}` — runs WaveScheduler; returns ordered backlog (unapproved).
+- `POST /approve/backlog/{repo_id} {approver, comment}` — gates downstream `/migrate` fan-out.
+- `GET /discover/{repo_id}` — current status, artifact paths, approval state.
+
+Artifacts land under `discovery/<repo_id>/`. See
+`docs/superpowers/specs/2026-04-14-discovery-planning-layer-design.md`.
