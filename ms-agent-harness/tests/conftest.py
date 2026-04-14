@@ -17,25 +17,14 @@ import pytest
 # Mock agent_framework BEFORE any agents.* imports so the @tool decorator
 # is a harmless pass-through.  This block runs at import time of conftest.
 # ---------------------------------------------------------------------------
-class _MockModule(types.ModuleType):
-    """Module that returns a MagicMock for any attribute access."""
-
-    def __getattr__(self, name):
-        if name == "tool":
-            return lambda **kwargs: (lambda fn: fn)
-        m = MagicMock(name=f"{self.__name__}.{name}")
-        setattr(self, name, m)
-        return m
-
-
-_af = _MockModule("agent_framework")
+_af = types.ModuleType("agent_framework")
+_af.tool = lambda **kwargs: (lambda fn: fn)
+_af.Agent = MagicMock(name="agent_framework.Agent")
 sys.modules.setdefault("agent_framework", _af)
-for _sub in (
-    "agent_framework_foundry",
-    "agent_framework.foundry",
-    "agent_framework_azure_ai",
-):
-    sys.modules.setdefault(_sub, _MockModule(_sub))
+
+_aff = types.ModuleType("agent_framework_foundry")
+_aff.FoundryChatClient = MagicMock(name="agent_framework_foundry.FoundryChatClient")
+sys.modules.setdefault("agent_framework_foundry", _aff)
 
 # Now safe to import project modules
 from agent_harness.config import Settings, SpeedProfile, ChunkingConfig, QualityConfig, RateLimits
