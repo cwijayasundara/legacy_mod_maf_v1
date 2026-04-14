@@ -1,0 +1,16 @@
+{
+  "repo_meta": {
+    "root_path": "tests/fixtures/synthetic_repo",
+    "total_files": 8,
+    "total_loc": 60,
+    "discovered_at": "2026-04-14T00:00:00Z"
+  },
+  "modules": [
+    {"id": "orders",        "path": "orders",        "language": "python",
+     "handler_entrypoint": "orders/handler.py",        "loc": 14, "config_files": ["orders/requirements.txt"]},
+    {"id": "payments",      "path": "payments",      "language": "python",
+     "handler_entrypoint": "payments/handler.py",      "loc": 18, "config_files": ["payments/requirements.txt"]},
+    {"id": "notifications", "path": "notifications", "language": "python",
+     "handler_entrypoint": "notifications/handler.py", "loc": 12, "config_files": ["notifications/requirements.txt"]}
+  ]
+}

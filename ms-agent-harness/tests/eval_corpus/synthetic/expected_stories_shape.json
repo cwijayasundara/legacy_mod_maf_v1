@@ -1,0 +1,5 @@
+{
+  "expected_epic_modules": ["orders", "payments", "notifications"],
+  "expected_story_count_per_module": {"orders": 1, "payments": 1, "notifications": 1},
+  "expected_dep_edges": [["payments", "orders"], ["notifications", "payments"]]
+}
