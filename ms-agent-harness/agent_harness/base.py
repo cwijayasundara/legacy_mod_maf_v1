@@ -157,18 +157,29 @@ def _load_program() -> str:
     return ""
 
 
-async def run_with_retry(agent: Agent, message: str, max_retries: int = 3) -> str:
-    """Run an agent with exponential backoff on rate limit errors."""
+async def run_with_retry(agent: "Agent", message: str, max_retries: int = 3) -> str:
+    """Run an agent with exponential backoff on rate-limit / timeout errors."""
+    from . import observability  # local import to avoid cycles
+
+    timeout = get_settings().timeouts.per_call_seconds
+
     for attempt in range(max_retries):
         try:
-            result = await agent.run(message)
-            return result.text
+            result = await asyncio.wait_for(agent.run(message), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("agent.run timeout after %ds (attempt %d/%d)",
+                            timeout, attempt + 1, max_retries)
+            if attempt == max_retries - 1:
+                break
+            await asyncio.sleep(2 ** attempt)
+            continue
         except Exception as e:
             error_str = str(e).lower()
 
             if "rate_limit" in error_str or "429" in error_str:
                 wait = (2 ** attempt) + (asyncio.get_event_loop().time() % 1)
-                logger.warning("Rate limited (attempt %d/%d), waiting %.1fs", attempt + 1, max_retries, wait)
+                logger.warning("Rate limited (attempt %d/%d), waiting %.1fs",
+                                attempt + 1, max_retries, wait)
                 await asyncio.sleep(wait)
                 continue
 
@@ -177,8 +188,25 @@ async def run_with_retry(agent: Agent, message: str, max_retries: int = 3) -> st
                 message = message[:int(len(message) * 0.7)]
                 continue
 
-            logger.error("Agent error (attempt %d/%d): %s", attempt + 1, max_retries, e)
+            logger.error("Agent error (attempt %d/%d): %s",
+                          attempt + 1, max_retries, e)
             if attempt == max_retries - 1:
                 raise
 
+        else:
+            input_tokens, output_tokens = _extract_usage(result, message)
+            observability.charge(input_tokens, output_tokens)
+            return result.text
+
     raise RuntimeError(f"Agent failed after {max_retries} retries")
+
+
+def _extract_usage(result, message: str) -> tuple[int, int]:
+    """Pull usage from the agent result if available; else char/4 heuristic."""
+    usage = getattr(result, "usage", None)
+    if usage is not None:
+        in_t = int(getattr(usage, "input_tokens", 0) or 0)
+        out_t = int(getattr(usage, "output_tokens", 0) or 0)
+        if in_t or out_t:
+            return in_t, out_t
+    return len(message) // 4, len(getattr(result, "text", "")) // 4
