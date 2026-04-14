@@ -1,0 +1,14 @@
+name: design
+description: Score an architect design for AWS->Azure mapping correctness + strangler-fit + IaC target.
+judge_model: gpt-5.4-mini
+temperature: 0.0
+criteria:
+  - name: mapping_correctness
+    weight: 0.5
+    description: Every AWS resource in State Mapping is mapped to a sensible Azure target (DynamoDB->Cosmos DB, SQS->Service Bus, SNS->Event Grid or Service Bus topic, Secrets Manager->Key Vault, EventBridge->Event Grid, Kinesis->Event Hubs, S3->Blob trigger or Event Grid).
+  - name: strangler_fit
+    weight: 0.3
+    description: The design acknowledges the strangler-fig boundary when dependencies remain on AWS; anti-corruption-layer guidance is present where applicable.
+  - name: iac_target
+    weight: 0.2
+    description: IaC section names Bicep (not Terraform/CloudFormation) and identifies Managed Identity for identity concerns.

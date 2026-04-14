@@ -1,0 +1,14 @@
+name: brd
+description: Score a module BRD for faithfulness + AWS resource coverage + trigger coverage.
+judge_model: gpt-5.4-mini
+temperature: 0.0
+criteria:
+  - name: faithfulness
+    weight: 0.4
+    description: Every business rule expressed in the source code is reflected in the BRD. No invented rules.
+  - name: resource_coverage
+    weight: 0.3
+    description: Every AWS resource in the module's graph edges appears by literal name in the Side Effects section.
+  - name: trigger_coverage
+    weight: 0.3
+    description: Every trigger present in the source (HTTP, SQS, SNS, EventBridge, DynamoDB Streams, S3, scheduled) has a bullet in the Triggers section.
