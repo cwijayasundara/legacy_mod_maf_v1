@@ -94,3 +94,21 @@ quality:
   reviewer_confidence_threshold: 70
   max_self_healing_attempts: 3
   max_iterations_per_module: 10
+
+# Operator-safety knobs (sub-project D.2)
+timeouts:
+  per_call_seconds: 120
+  per_stage_seconds:
+    analyzer: 600
+    coder: 900
+    tester: 600
+    reviewer: 300
+    security: 300
+    scanner: 300
+    grapher: 600
+    brd: 900
+    architect: 900
+    stories: 600
+
+cost:
+  per_run_token_cap: null

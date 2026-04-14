@@ -1,6 +1,7 @@
 """Workflow orchestration: hash → cache → 3-attempt self-heal → write artifact."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -10,6 +11,7 @@ from typing import Awaitable, Callable
 
 from pydantic import ValidationError
 
+from .. import observability
 from ..persistence.repository import MigrationRepository
 from .artifacts import (
     Backlog, CriticReport, DependencyGraph, Inventory, Stories,
@@ -68,6 +70,7 @@ async def run_stage(
     artifact_path: Path,
     input_hash: str,
     critic_context: dict | None = None,
+    stage_timeout: float | None = None,
 ) -> str:
     """Run one stage with caching + 3-attempt self-heal."""
     artifact_path = Path(artifact_path)
@@ -80,8 +83,23 @@ async def run_stage(
     feedback = ""
     last: CriticReport | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        observability.set_stage(stage_name, attempt)
         logger.info("[%s] attempt %d/%d", stage_name, attempt, MAX_ATTEMPTS)
-        result = await produce(feedback)
+        try:
+            if stage_timeout is not None:
+                result = await asyncio.wait_for(produce(feedback), timeout=stage_timeout)
+            else:
+                result = await produce(feedback)
+        except asyncio.TimeoutError:
+            report = CriticReport(
+                verdict="FAIL",
+                reasons=[f"stage timed out after {stage_timeout}s"],
+                suggestions=["Investigate the stall or raise the per-stage timeout."],
+            )
+            feedback = "\n\n## Critic feedback (apply this):\n" + "\n".join(
+                f"- {r}" for r in report.reasons)
+            last = report
+            continue
         report = critic(result, critic_context or {})
         if report.verdict == "PASS":
             artifact_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,6 +135,9 @@ async def run_discovery(repo_id: str, repo_path: str,
     from .critics.brd_critic import critique_brds
     from .critics.design_critic import critique_designs
     from .critics.story_critic import critique_stories
+    from agent_harness.config import load_settings
+
+    _settings = load_settings()
 
     repo.create_discovery_run(repo_id)
     root = Path(repo_path).resolve()
@@ -142,7 +163,8 @@ async def run_discovery(repo_id: str, repo_path: str,
         return repo_scanner.sanity_check(inv, repo_root=root)
 
     raw_inv = await run_stage(repo, repo_id, "scanner", _produce_scanner, _critic_scanner,
-                              paths.inventory_path(repo_id), inv_hash)
+                              paths.inventory_path(repo_id), inv_hash,
+                              stage_timeout=_settings.timeout_for("scanner"))
     inventory = Inventory.model_validate_json(raw_inv)
 
     # Stage 2: grapher
@@ -165,7 +187,8 @@ async def run_discovery(repo_id: str, repo_path: str,
         return critique_graph(g, root, inventory)
 
     raw_graph = await run_stage(repo, repo_id, "grapher", _produce_grapher, _critic_grapher,
-                                paths.graph_path(repo_id), g_hash)
+                                paths.graph_path(repo_id), g_hash,
+                                stage_timeout=_settings.timeout_for("grapher"))
     graph = DependencyGraph.model_validate_json(raw_graph)
 
     # Stage 3: brd
@@ -185,7 +208,8 @@ async def run_discovery(repo_id: str, repo_path: str,
         return critique_brds(cached_brds, cached_sys, inventory, graph)
 
     await run_stage(repo, repo_id, "brd", _produce_brd, _critic_brd,
-                    paths.brd_dir(repo_id) / "_summary.json", b_hash)
+                    paths.brd_dir(repo_id) / "_summary.json", b_hash,
+                    stage_timeout=_settings.timeout_for("brd"))
 
     # Stage 4: architect
     d_hash = hash_inputs(repo_id, "architect", [raw_inv, raw_graph,
@@ -207,7 +231,8 @@ async def run_discovery(repo_id: str, repo_path: str,
                                 inventory, graph, cached_brds)
 
     await run_stage(repo, repo_id, "architect", _produce_design, _critic_design,
-                    paths.design_dir(repo_id) / "_summary.json", d_hash)
+                    paths.design_dir(repo_id) / "_summary.json", d_hash,
+                    stage_timeout=_settings.timeout_for("architect"))
 
     # Stage 5: stories
     s_hash = hash_inputs(repo_id, "stories", [raw_inv, raw_graph,
@@ -234,7 +259,8 @@ async def run_discovery(repo_id: str, repo_path: str,
         return critique_stories(s, inventory)
 
     await run_stage(repo, repo_id, "stories", _produce_stories, _critic_stories,
-                    paths.stories_path(repo_id), s_hash)
+                    paths.stories_path(repo_id), s_hash,
+                    stage_timeout=_settings.timeout_for("stories"))
 
     return {
         "status": "ok",

@@ -8,6 +8,7 @@ ratcheting enforcement, and checkpoint/resume via SQLite.
 This is the core engine — called by the REST API or CLI.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import observability
 from .analyzer import analyze_module
 from .coder import propose_contract, migrate_module
 from .tester import finalize_contract, evaluate_module
@@ -27,6 +29,20 @@ from .quality.architecture_checker import check_architecture
 from .quality.code_quality import check_directory
 
 logger = logging.getLogger("pipeline")
+
+
+class _StageTimeout(RuntimeError):
+    def __init__(self, role: str, seconds: float):
+        super().__init__(f"{role} timed out after {seconds}s")
+        self.role = role
+        self.seconds = seconds
+
+
+async def _with_stage_timeout(settings, role: str, coro):
+    try:
+        return await asyncio.wait_for(coro, timeout=settings.timeout_for(role))
+    except asyncio.TimeoutError:
+        raise _StageTimeout(role, settings.timeout_for(role))
 
 
 def _common_ancestor(paths: list[Path]) -> Path:
@@ -139,17 +155,29 @@ class MigrationPipeline:
 
         try:
             # ─── Gate 1: Analysis ──────────────────────────────────────
+            observability.set_stage("analyzer", attempt=1)
             logger.info("[Gate 1] Running analyzer for %s", module)
             cached = self.repo.get_cached_analysis(module)
             if cached:
                 logger.info("Using cached analysis for %s", module)
                 analysis = cached.get("analysis_text", "")
             else:
-                analysis = await analyze_module(
-                    module=module, language=language, source_dir=source_dir,
-                    source_paths=source_paths, context_paths=context_paths,
-                    repo_root=repo_root, module_path=module_path,
-                )
+                try:
+                    analysis = await _with_stage_timeout(
+                        self.settings, "analyzer",
+                        analyze_module(
+                            module=module, language=language, source_dir=source_dir,
+                            source_paths=source_paths, context_paths=context_paths,
+                            repo_root=repo_root, module_path=module_path,
+                        ),
+                    )
+                except _StageTimeout as exc:
+                    self.repo.complete_run(run_id, "blocked", str(exc))
+                    await self.state.push_state()
+                    return PipelineResult(
+                        module=module, status="blocked", message=str(exc),
+                        gates_failed=[1],
+                    )
                 self.repo.cache_analysis(
                     module,
                     {"analysis_text": analysis},
@@ -173,22 +201,46 @@ class MigrationPipeline:
                 logger.info("[Gate 3] Migration attempt %d/%d for %s", attempt, max_attempts, module)
 
                 # Coder migrates
-                await migrate_module(
-                    module=module, language=language, source_dir=source_dir,
-                    analysis_path=analysis, attempt=attempt,
-                    source_paths=source_paths, context_paths=context_paths,
-                    repo_root=repo_root, module_path=module_path,
-                )
+                observability.set_stage("coder", attempt=attempt)
+                try:
+                    await _with_stage_timeout(
+                        self.settings, "coder",
+                        migrate_module(
+                            module=module, language=language, source_dir=source_dir,
+                            analysis_path=analysis, attempt=attempt,
+                            source_paths=source_paths, context_paths=context_paths,
+                            repo_root=repo_root, module_path=module_path,
+                        ),
+                    )
+                except _StageTimeout as exc:
+                    self.repo.complete_run(run_id, "blocked", str(exc))
+                    await self.state.push_state()
+                    return PipelineResult(
+                        module=module, status="blocked", message=str(exc),
+                        gates_failed=[3],
+                    )
                 gates_passed.append(3) if 3 not in gates_passed else None
 
                 # Tester evaluates
+                observability.set_stage("tester", attempt=attempt)
                 logger.info("[Gate 4-5] Tester evaluating %s (attempt %d)", module, attempt)
-                eval_result = await evaluate_module(
-                    module=module, language=language, contract=contract,
-                    attempt=attempt,
-                    source_paths=source_paths, context_paths=context_paths,
-                    repo_root=repo_root, module_path=module_path,
-                )
+                try:
+                    eval_result = await _with_stage_timeout(
+                        self.settings, "tester",
+                        evaluate_module(
+                            module=module, language=language, contract=contract,
+                            attempt=attempt,
+                            source_paths=source_paths, context_paths=context_paths,
+                            repo_root=repo_root, module_path=module_path,
+                        ),
+                    )
+                except _StageTimeout as exc:
+                    self.repo.complete_run(run_id, "blocked", str(exc))
+                    await self.state.push_state()
+                    return PipelineResult(
+                        module=module, status="blocked", message=str(exc),
+                        gates_failed=[4, 5],
+                    )
 
                 if "PASS" in eval_result.upper():
                     migration_passed = True
@@ -236,11 +288,23 @@ class MigrationPipeline:
                 logger.warning("Quality gate: %d arch violations, %d blocking issues", len(arch_violations), len(blocking))
 
             # ─── Gate 6: Reviewer ──────────────────────────────────────
+            observability.set_stage("reviewer", attempt=1)
             logger.info("[Gate 6] Running reviewer for %s", module)
-            review_result = await review_module(
-                module=module, language=language,
-                repo_root=repo_root, module_path=module_path,
-            )
+            try:
+                review_result = await _with_stage_timeout(
+                    self.settings, "reviewer",
+                    review_module(
+                        module=module, language=language,
+                        repo_root=repo_root, module_path=module_path,
+                    ),
+                )
+            except _StageTimeout as exc:
+                self.repo.complete_run(run_id, "blocked", str(exc))
+                await self.state.push_state()
+                return PipelineResult(
+                    module=module, status="blocked", message=str(exc),
+                    gates_failed=[6],
+                )
 
             approved = "APPROVE" in review_result.get("recommendation", "").upper()
             score = review_result.get("confidence_score", 0)
@@ -257,11 +321,23 @@ class MigrationPipeline:
                 message = f"Reviewer: {review_result.get('recommendation', 'UNKNOWN')} (score: {score}/100)"
 
             # ─── Gate 7: Security Review ──────────────────────────────────────
+            observability.set_stage("security", attempt=1)
             logger.info("[Gate 7] Running security reviewer for %s", module)
-            security_result = await security_review(
-                module=module, language=language,
-                repo_root=repo_root, module_path=module_path,
-            )
+            try:
+                security_result = await _with_stage_timeout(
+                    self.settings, "security",
+                    security_review(
+                        module=module, language=language,
+                        repo_root=repo_root, module_path=module_path,
+                    ),
+                )
+            except _StageTimeout as exc:
+                self.repo.complete_run(run_id, "blocked", str(exc))
+                await self.state.push_state()
+                return PipelineResult(
+                    module=module, status="blocked", message=str(exc),
+                    gates_failed=[7],
+                )
             if security_result["recommendation"] == "BLOCKED":
                 gates_failed.append(7)
             else:

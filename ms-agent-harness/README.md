@@ -334,3 +334,43 @@ See `templates/AGENTS.md.example` for the conventions.
   --stdout`. Returns `VALID` / `INVALID: <stderr>` / `SKIPPED: <reason>`.
   Used by the reviewer and security_reviewer. When it returns `INVALID`,
   the reviewer is instructed never to APPROVE without regenerating.
+
+## Operator knobs (sub-project D.2)
+
+### Timeouts
+`config/settings.yaml::timeouts`:
+
+- `per_call_seconds` (default 120) — wallclock cap on each `agent.run` call.
+  Exceeding it retries with backoff; after `max_retries` the stage surfaces.
+- `per_stage_seconds.<role>` — wallclock cap on the full stage (all attempts
+  combined for discovery; single attempt for migration). Exceeding it marks
+  the stage blocked.
+
+### Token budget
+`config/settings.yaml::cost.per_run_token_cap` — integer (null disables).
+When the cumulative input+output tokens of a single `/discover`, `/plan`,
+`/migrate`, `/migrate/sync`, `/migrate-repo`, or `/migrate-repo/sync`
+invocation cross the cap, the in-flight run aborts with HTTP 402 Payment
+Required. Partial artifacts on disk are preserved for inspection.
+
+Token usage is pulled from `result.usage.input_tokens` /
+`result.usage.output_tokens` when the SDK provides them; otherwise
+approximated as `len(text) // 4`.
+
+### Structured logging
+Every log line is tagged with the current run's `trace_id`, `stage`, and
+`attempt` via a logging Filter reading ContextVars. Text format (default)
+inlines the tags; set `LOG_FORMAT=json` for JSON lines to stdout suitable
+for ingestion.
+
+```
+LOG_FORMAT=json uvicorn agent_harness.orchestrator.api:app
+```
+
+Example JSON line:
+
+```
+{"ts": "2026-04-14T14:00:00Z", "level": "INFO", "logger": "pipeline",
+ "trace_id": "migrate-ab12cd34", "stage": "analyzer", "attempt": 1,
+ "message": "[Gate 1] Running analyzer for orders"}
+```

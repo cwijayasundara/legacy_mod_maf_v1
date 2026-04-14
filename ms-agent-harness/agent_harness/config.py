@@ -53,6 +53,22 @@ class QualityConfig:
 
 
 @dataclass
+class TimeoutConfig:
+    per_call_seconds: int = 120
+    per_stage_seconds: dict[str, int] = field(default_factory=lambda: {
+        "analyzer": 600, "coder": 900, "tester": 600,
+        "reviewer": 300, "security": 300,
+        "scanner": 300, "grapher": 600, "brd": 900,
+        "architect": 900, "stories": 600,
+    })
+
+
+@dataclass
+class CostConfig:
+    per_run_token_cap: int | None = None
+
+
+@dataclass
 class Settings:
     """Root configuration."""
     foundry_endpoint: str = ""
@@ -63,12 +79,17 @@ class Settings:
     rate_limits: RateLimits = field(default_factory=RateLimits)
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
+    timeouts: TimeoutConfig = field(default_factory=TimeoutConfig)
+    cost: CostConfig = field(default_factory=CostConfig)
 
     def model_for_role(self, role: str) -> str:
         return self.models.get(role, self.default_model)
 
     def active_profile(self) -> SpeedProfile:
         return self.speed_profiles.get(self.default_profile, list(self.speed_profiles.values())[0])
+
+    def timeout_for(self, role: str) -> int:
+        return self.timeouts.per_stage_seconds.get(role, 600)
 
 
 def load_settings() -> Settings:
@@ -98,6 +119,19 @@ def load_settings() -> Settings:
     ch = raw.get("chunking", {})
     qa = raw.get("quality", {})
 
+    timeouts_raw = raw.get("timeouts", {}) or {}
+    if "per_stage_seconds" in timeouts_raw and timeouts_raw.get("per_stage_seconds"):
+        per_stage = dict(timeouts_raw["per_stage_seconds"])
+    else:
+        per_stage = TimeoutConfig().per_stage_seconds
+    timeouts_cfg = TimeoutConfig(
+        per_call_seconds=int(timeouts_raw.get("per_call_seconds", 120)),
+        per_stage_seconds=per_stage,
+    )
+    cost_raw = raw.get("cost", {}) or {}
+    cap_raw = cost_raw.get("per_run_token_cap")
+    cost_cfg = CostConfig(per_run_token_cap=int(cap_raw) if cap_raw is not None else None)
+
     return Settings(
         foundry_endpoint=os.environ.get(endpoint_env, ""),
         default_model=os.environ.get(model_env, "gpt-4o"),
@@ -120,4 +154,6 @@ def load_settings() -> Settings:
             max_self_healing_attempts=qa.get("max_self_healing_attempts", 3),
             max_iterations_per_module=qa.get("max_iterations_per_module", 10),
         ),
+        timeouts=timeouts_cfg,
+        cost=cost_cfg,
     )
