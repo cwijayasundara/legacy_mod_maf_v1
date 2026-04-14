@@ -1,0 +1,32 @@
+# AGENTS.md
+
+Drop one of these at the root of a repo you're migrating to give every
+agent (discovery + migration) shared context. Drop another inside a
+module directory for module-specific overrides.
+
+## What goes here
+
+- Domain glossary — business terms, ID shapes, regulatory classes.
+- Non-obvious invariants — idempotency keys, ordering guarantees.
+- Forbidden patterns — "never log raw PAN", "never invent retries on X".
+- Preferred patterns — "always use `TransactWriteItems` for multi-row updates".
+- Target Azure conventions — naming, resource groups, identity boundaries.
+
+## What NOT to put here
+
+- Re-statements of the pipeline's own quality principles (already injected
+  via `agent_harness/prompts/quality-principles.md`).
+- Runtime state (use `config/state/learned-rules.md`).
+- Secret material (goes in Key Vault, not git).
+
+## Injection order
+
+1. Stage prompt (e.g. `prompts/coder.md`).
+2. `prompts/quality-principles.md`.
+3. `config/state/learned-rules.md`.
+4. `config/program.md`.
+5. `<repo_root>/AGENTS.md` — this file.
+6. `<module_path>/AGENTS.md` — module-specific overrides (migration only).
+
+Later entries can override earlier ones; agents are instructed to give
+precedence to more-specific guidance.
