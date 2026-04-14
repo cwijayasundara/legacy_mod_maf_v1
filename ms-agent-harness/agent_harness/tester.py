@@ -18,12 +18,14 @@ from .context.chunker import needs_chunking, chunk_file
 logger = logging.getLogger("agent.tester")
 
 
-def create_tester():
+def create_tester(repo_root=None, module_path=None):
     """Create the tester agent with test runner tools."""
-    return create_agent("tester", tools=[
-        read_file, search_files, list_directory,
-        run_tests, measure_coverage,
-    ])
+    return create_agent(
+        role="tester",
+        tools=[read_file, search_files, list_directory, run_tests, measure_coverage],
+        repo_root=repo_root,
+        module_path=module_path,
+    )
 
 
 async def finalize_contract(module: str, proposed_contract: str) -> str:
@@ -76,12 +78,14 @@ async def evaluate_module(
     attempt: int = 1,
     source_paths: list[str] | tuple = (),
     context_paths: list[str] | tuple = (),
+    repo_root: str | None = None,
+    module_path: str | None = None,
 ) -> str:
     """
     Run three-layer evaluation on a migrated module.
     Returns the evaluation result text (containing PASS or FAIL verdict).
     """
-    agent = create_tester()
+    agent = create_tester(repo_root=repo_root, module_path=module_path)
     out_dir = Path("migration-analysis") / module
     azure_dir = Path("src") / "azure-functions" / module
 

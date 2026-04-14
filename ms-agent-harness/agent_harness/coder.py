@@ -9,23 +9,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import create_agent, run_with_retry
-from .tools import read_file, write_file, search_files, list_directory
+from .tools import read_file, write_file, search_files, list_directory, apply_patch
 from .context.chunker import needs_chunking, chunk_file
 
-PROMPT_PATH = Path(__file__).parent / "prompts" / "coder.md"
 
-
-def _load_prompt() -> str:
-    """Load the coder system prompt from the markdown file."""
-    return PROMPT_PATH.read_text(encoding="utf-8")
-
-
-def create_coder():
+def create_coder(repo_root=None, module_path=None):
     """Create the coder agent with read/write tools."""
     return create_agent(
-        name="coder",
-        system_prompt=_load_prompt(),
-        tools=[read_file, write_file, search_files, list_directory],
+        role="coder",
+        tools=[read_file, write_file, search_files, list_directory, apply_patch],
+        repo_root=repo_root,
+        module_path=module_path,
     )
 
 
@@ -103,6 +97,8 @@ async def migrate_module(
     attempt: int = 1,
     source_paths: list[str] | tuple = (),
     context_paths: list[str] | tuple = (),
+    repo_root: str | None = None,
+    module_path: str | None = None,
 ) -> str:
     """
     Perform TDD-first migration of a Lambda module to Azure Functions.
@@ -117,7 +113,7 @@ async def migrate_module(
     Returns:
         Path to the migrated Azure Function directory.
     """
-    agent = create_coder()
+    agent = create_coder(repo_root=repo_root, module_path=module_path)
 
     output_base = Path("src/azure-functions") / module
     output_base.mkdir(parents=True, exist_ok=True)

@@ -10,14 +10,24 @@ from pathlib import Path
 
 from .base import create_agent, run_with_retry
 from .tools.file_tools import read_file, search_files, list_directory
+from .tools.bicep_tool import validate_bicep
 from .quality.security_scanner import scan_directory, SecurityFinding
 
 logger = logging.getLogger("agent.security_reviewer")
 
-def create_security_reviewer():
-    return create_agent("security-reviewer", tools=[read_file, search_files, list_directory])
+def create_security_reviewer(repo_root=None, module_path=None):
+    return create_agent(
+        role="security-reviewer",
+        tools=[read_file, search_files, list_directory, validate_bicep],
+        repo_root=repo_root,
+        module_path=module_path,
+    )
 
-async def security_review(module: str, language: str) -> dict:
+async def security_review(
+    module: str, language: str,
+    repo_root: str | None = None,
+    module_path: str | None = None,
+) -> dict:
     """Run automated + LLM security scan on migrated code."""
     azure_dir = f"src/azure-functions/{module}"
     out_dir = Path("migration-analysis") / module
@@ -27,7 +37,7 @@ async def security_review(module: str, language: str) -> dict:
     automated_findings = scan_directory(azure_dir)
 
     # Phase 2: LLM-based deep scan
-    agent = create_security_reviewer()
+    agent = create_security_reviewer(repo_root=repo_root, module_path=module_path)
     prompt = f"""Security review the migrated Azure Function for module '{module}' ({language}).
 
 Code location: {azure_dir}/
