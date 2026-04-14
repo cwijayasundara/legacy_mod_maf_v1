@@ -257,3 +257,24 @@ For multi-module repos, run discovery first to produce a wave-ordered backlog:
 
 Artifacts land under `discovery/<repo_id>/`. See
 `docs/superpowers/specs/2026-04-14-discovery-planning-layer-design.md`.
+
+## Multi-Module Migration (Fanout)
+
+After discovery approves a backlog, fan it out to the pipeline wave by wave:
+
+- `POST /migrate-repo {repo_id}` — background fanout. Returns `{repo_id, status:"accepted"}`.
+- `POST /migrate-repo/sync {repo_id}` — synchronous; returns per-module result list.
+- `GET /migrate-repo/{repo_id}` — latest run progress with per-module wave + status.
+
+Guardrails:
+- 409 if `/approve/backlog/{repo_id}` has not been called.
+- Modules run concurrently within a wave under the global
+  `MAX_CONCURRENT_MIGRATIONS` semaphore.
+- If a module fails, its transitive dependents (by `stories.json` `depends_on`)
+  are marked `skipped`; independent branches continue.
+
+Each backlog item carries `source_paths` (the handler file to migrate) and
+`context_paths` (shared helpers the handler imports but the current run
+is not migrating — passed to the agent as read-only anti-corruption
+boundary). This lets the pipeline ingest arbitrary repo layouts without the
+legacy `src/lambda/<module>/` staging requirement.
