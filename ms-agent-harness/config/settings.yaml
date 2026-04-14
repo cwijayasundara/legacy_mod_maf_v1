@@ -27,6 +27,8 @@ models:
   critic_brd: gpt-5.4-mini
   critic_design: gpt-5.4-mini
   critic_story: gpt-5.4-mini
+  # ── Evaluation ──
+  eval_judge: gpt-5.4-mini
 
 # Speed profiles (from Azure Legacy Modernization Agents)
 # Control token budgets, reasoning effort, and parallelism per file complexity

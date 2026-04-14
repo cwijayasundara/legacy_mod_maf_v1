@@ -1,0 +1,3 @@
+name: synthetic
+repo_path: ../../fixtures/synthetic_repo
+description: Three-module Lambda fixture used by discovery unit tests.

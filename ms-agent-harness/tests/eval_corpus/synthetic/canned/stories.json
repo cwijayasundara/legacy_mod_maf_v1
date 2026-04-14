@@ -1,0 +1,15 @@
+{
+  "epics": [
+    {"id": "E1", "module_id": "orders",        "title": "Migrate orders",        "story_ids": ["S1"]},
+    {"id": "E2", "module_id": "payments",      "title": "Migrate payments",      "story_ids": ["S2"]},
+    {"id": "E3", "module_id": "notifications", "title": "Migrate notifications", "story_ids": ["S3"]}
+  ],
+  "stories": [
+    {"id": "S1", "epic_id": "E1", "title": "orders fn",        "description": "d",
+     "acceptance_criteria": [{"text": "ac"}], "depends_on": [],        "blocks": ["S2"], "estimate": "M"},
+    {"id": "S2", "epic_id": "E2", "title": "payments fn",      "description": "d",
+     "acceptance_criteria": [{"text": "ac"}], "depends_on": ["S1"],    "blocks": ["S3"], "estimate": "M"},
+    {"id": "S3", "epic_id": "E3", "title": "notifications fn", "description": "d",
+     "acceptance_criteria": [{"text": "ac"}], "depends_on": ["S2"],    "blocks": [],     "estimate": "M"}
+  ]
+}

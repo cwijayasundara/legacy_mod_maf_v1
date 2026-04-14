@@ -1,0 +1,27 @@
+{
+  "nodes": [
+    {"id": "orders",        "kind": "module",       "attrs": {"path": "orders",        "language": "python"}},
+    {"id": "payments",      "kind": "module",       "attrs": {"path": "payments",      "language": "python"}},
+    {"id": "notifications", "kind": "module",       "attrs": {"path": "notifications", "language": "python"}},
+    {"id": "dynamodb_table:Orders",            "kind": "aws_resource",
+     "attrs": {"resource_kind": "dynamodb_table",            "resource_name": "Orders"}},
+    {"id": "dynamodb_table:Payments",          "kind": "aws_resource",
+     "attrs": {"resource_kind": "dynamodb_table",            "resource_name": "Payments"}},
+    {"id": "sqs_queue:payments-queue",         "kind": "aws_resource",
+     "attrs": {"resource_kind": "sqs_queue",                 "resource_name": "payments-queue"}},
+    {"id": "sns_topic:payment-events",         "kind": "aws_resource",
+     "attrs": {"resource_kind": "sns_topic",                 "resource_name": "payment-events"}},
+    {"id": "secrets_manager_secret:webhook/url", "kind": "aws_resource",
+     "attrs": {"resource_kind": "secrets_manager_secret",    "resource_name": "webhook/url"}}
+  ],
+  "edges": [
+    {"src": "orders",        "dst": "dynamodb_table:Orders",              "kind": "reads"},
+    {"src": "orders",        "dst": "dynamodb_table:Orders",              "kind": "writes"},
+    {"src": "orders",        "dst": "sqs_queue:payments-queue",           "kind": "produces"},
+    {"src": "payments",      "dst": "dynamodb_table:Orders",              "kind": "reads"},
+    {"src": "payments",      "dst": "dynamodb_table:Payments",            "kind": "reads"},
+    {"src": "payments",      "dst": "dynamodb_table:Payments",            "kind": "writes"},
+    {"src": "payments",      "dst": "sns_topic:payment-events",           "kind": "produces"},
+    {"src": "notifications", "dst": "secrets_manager_secret:webhook/url", "kind": "reads"}
+  ]
+}

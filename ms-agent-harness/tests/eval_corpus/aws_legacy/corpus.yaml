@@ -1,0 +1,3 @@
+name: aws_legacy
+repo_path: ../../../../aws_legacy/generated_code
+description: Real-world Python Lambda package with 4 handlers + shared services.
