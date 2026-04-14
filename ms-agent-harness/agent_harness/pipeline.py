@@ -64,7 +64,11 @@ class MigrationPipeline:
     def __init__(self, project_root: str = ""):
         self.project_root = project_root or str(Path(__file__).parent.parent)
         self.settings = load_settings()
-        self.repo = MigrationRepository()
+        # Scope the SQLite DB to the project root so multiple workspaces
+        # (e.g. worktrees, test tmpdirs) do not collide on cached analysis.
+        self.repo = MigrationRepository(
+            db_path=str(Path(self.project_root) / "migration.db")
+        )
         self.state = StateManager()
 
     async def initialize(self):
@@ -80,12 +84,17 @@ class MigrationPipeline:
         title: str = "",
         description: str = "",
         acceptance_criteria: str = "",
+        source_paths: list[str] | tuple = (),
+        context_paths: list[str] | tuple = (),
     ) -> PipelineResult:
         """
         Run the full migration pipeline for a single module.
         """
         await self.initialize()
         await self.state.pull_state()
+
+        source_paths = list(source_paths) if source_paths else []
+        context_paths = list(context_paths) if context_paths else []
 
         logger.info("Pipeline starting: %s (%s)", module, language)
         run_id = self.repo.start_run(module, language, work_item_id)
@@ -107,7 +116,10 @@ class MigrationPipeline:
                 logger.info("Using cached analysis for %s", module)
                 analysis = cached.get("analysis_text", "")
             else:
-                analysis = await analyze_module(module, language, source_dir)
+                analysis = await analyze_module(
+                    module=module, language=language, source_dir=source_dir,
+                    source_paths=source_paths, context_paths=context_paths,
+                )
                 self.repo.cache_analysis(
                     module,
                     {"analysis_text": analysis},
@@ -131,12 +143,20 @@ class MigrationPipeline:
                 logger.info("[Gate 3] Migration attempt %d/%d for %s", attempt, max_attempts, module)
 
                 # Coder migrates
-                await migrate_module(module, language, analysis, contract, attempt)
+                await migrate_module(
+                    module=module, language=language, source_dir=source_dir,
+                    analysis_path=analysis, attempt=attempt,
+                    source_paths=source_paths, context_paths=context_paths,
+                )
                 gates_passed.append(3) if 3 not in gates_passed else None
 
                 # Tester evaluates
                 logger.info("[Gate 4-5] Tester evaluating %s (attempt %d)", module, attempt)
-                eval_result = await evaluate_module(module, language, contract, attempt)
+                eval_result = await evaluate_module(
+                    module=module, language=language, contract=contract,
+                    attempt=attempt,
+                    source_paths=source_paths, context_paths=context_paths,
+                )
 
                 if "PASS" in eval_result.upper():
                     migration_passed = True

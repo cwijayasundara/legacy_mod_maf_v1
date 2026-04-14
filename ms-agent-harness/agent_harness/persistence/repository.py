@@ -100,6 +100,29 @@ class MigrationRepository:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (repo_id, stage_name)
                 );
+
+                CREATE TABLE IF NOT EXISTS migrate_repo_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repo_id TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    status TEXT NOT NULL DEFAULT 'running'
+                );
+
+                CREATE TABLE IF NOT EXISTS migrate_repo_module_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repo_run_id INTEGER NOT NULL,
+                    module TEXT NOT NULL,
+                    wave INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    reason TEXT DEFAULT '',
+                    review_score INTEGER,
+                    completed_at TEXT,
+                    UNIQUE(repo_run_id, module)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_mrr_repo ON migrate_repo_runs(repo_id);
+                CREATE INDEX IF NOT EXISTS idx_mrmr_run ON migrate_repo_module_runs(repo_run_id);
             """)
         self._initialized = True
 
@@ -290,6 +313,66 @@ class MigrationRepository:
                 (repo_id, stage_name),
             ).fetchone()
             return row["artifact_path"] if row else None
+
+
+    # ─── Migrate Repo Runs ─────────────────────────────────────────────
+
+    def create_migrate_repo_run(self, repo_id: str) -> int:
+        self.initialize()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """INSERT INTO migrate_repo_runs (repo_id, started_at, status)
+                   VALUES (?, ?, 'running')""",
+                (repo_id, _now()),
+            )
+            return cursor.lastrowid
+
+    def record_migrate_module(self, run_id: int, module: str, wave: int,
+                              status: str, reason: str = "",
+                              review_score: int | None = None) -> None:
+        self.initialize()
+        with self._connect() as conn:
+            completed = _now() if status in {"completed", "failed", "skipped"} else None
+            conn.execute(
+                """INSERT INTO migrate_repo_module_runs
+                       (repo_run_id, module, wave, status, reason, review_score, completed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(repo_run_id, module) DO UPDATE SET
+                       wave = excluded.wave,
+                       status = excluded.status,
+                       reason = excluded.reason,
+                       review_score = excluded.review_score,
+                       completed_at = excluded.completed_at""",
+                (run_id, module, wave, status, reason, review_score, completed),
+            )
+
+    def complete_migrate_repo_run(self, run_id: int, status: str) -> None:
+        self.initialize()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE migrate_repo_runs SET status = ?, completed_at = ? WHERE id = ?",
+                (status, _now(), run_id),
+            )
+
+    def get_migrate_repo_run(self, repo_id: str) -> dict | None:
+        self.initialize()
+        with self._connect() as conn:
+            run = conn.execute(
+                """SELECT * FROM migrate_repo_runs WHERE repo_id = ?
+                   ORDER BY id DESC LIMIT 1""",
+                (repo_id,),
+            ).fetchone()
+            if not run:
+                return None
+            rows = conn.execute(
+                """SELECT module, wave, status, reason, review_score, completed_at
+                   FROM migrate_repo_module_runs WHERE repo_run_id = ?
+                   ORDER BY wave, module""",
+                (run["id"],),
+            ).fetchall()
+            data = dict(run)
+            data["modules"] = [dict(r) for r in rows]
+            return data
 
 
 def _now() -> str:

@@ -100,7 +100,8 @@ class Stories(BaseModel):
 class BacklogItem(BaseModel):
     """Strict superset of MigrationRequest in orchestrator/api.py.
 
-    Drop the `wave` field and the rest must validate as MigrationRequest.
+    Drop the wave/source_paths/context_paths fields and the rest must
+    validate as MigrationRequest.
     """
     module: str
     language: str
@@ -108,6 +109,8 @@ class BacklogItem(BaseModel):
     title: str = ""
     description: str = ""
     acceptance_criteria: str = ""
+    source_paths: list[str] = Field(default_factory=list)
+    context_paths: list[str] = Field(default_factory=list)
     wave: int
 
 

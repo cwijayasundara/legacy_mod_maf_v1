@@ -37,49 +37,65 @@ def create_analyzer():
     )
 
 
-async def analyze_module(module: str, language: str, source_dir: str) -> str:
-    """
-    Analyze an AWS Lambda module for migration to Azure Functions.
+async def analyze_module(
+    module: str, language: str, source_dir: str,
+    source_paths: list[str] | tuple = (),
+    context_paths: list[str] | tuple = (),
+) -> str:
+    """Analyze a Lambda module for migration to Azure Functions.
 
-    Args:
-        module: Name of the Lambda module (e.g. 'order-processor').
-        language: Programming language (python, node, java, csharp).
-        source_dir: Path to the source directory containing the Lambda code.
-
-    Returns:
-        Path to the generated analysis.md file.
+    When source_paths is provided, those files (not a rglob of source_dir)
+    are the sole source. context_paths are listed read-only.
     """
     agent = create_analyzer()
 
-    # Determine output directory
     output_dir = Path("migration-analysis") / module
     output_dir.mkdir(parents=True, exist_ok=True)
     analysis_path = output_dir / "analysis.md"
 
-    # Build the list of source files, handling large files via chunking
-    source_path = Path(source_dir)
-    file_contents = []
-    for fpath in sorted(source_path.rglob("*")):
-        if fpath.is_file() and not fpath.name.startswith("."):
-            if needs_chunking(fpath):
-                chunks = chunk_file(fpath)
-                for i, chunk in enumerate(chunks):
-                    file_contents.append(
-                        f"--- {fpath} (chunk {i + 1}/{len(chunks)}) ---\n{chunk}"
-                    )
+    file_contents: list[str] = []
+    if source_paths:
+        for spath in source_paths:
+            p = Path(spath)
+            if not p.is_file():
+                continue
+            if needs_chunking(p):
+                for i, chunk in enumerate(chunk_file(p)):
+                    file_contents.append(f"--- {p} (chunk {i + 1}) ---\n{chunk}")
             else:
-                content = fpath.read_text(encoding="utf-8", errors="replace")
-                file_contents.append(f"--- {fpath} ---\n{content}")
+                file_contents.append(
+                    f"--- {p} ---\n{p.read_text(encoding='utf-8', errors='replace')}"
+                )
+    else:
+        src = Path(source_dir)
+        for fpath in sorted(src.rglob("*")):
+            if fpath.is_file() and not fpath.name.startswith("."):
+                if needs_chunking(fpath):
+                    for i, chunk in enumerate(chunk_file(fpath)):
+                        file_contents.append(f"--- {fpath} (chunk {i + 1}) ---\n{chunk}")
+                else:
+                    file_contents.append(
+                        f"--- {fpath} ---\n{fpath.read_text(encoding='utf-8', errors='replace')}"
+                    )
+
+    if context_paths:
+        file_contents.append(
+            "\n## CONTEXT (read-only — do NOT migrate these files; "
+            "treat as an anti-corruption boundary)\n"
+        )
+        for cpath in context_paths:
+            p = Path(cpath)
+            if p.is_file():
+                file_contents.append(
+                    f"--- {p} (read-only) ---\n{p.read_text(encoding='utf-8', errors='replace')}"
+                )
 
     source_listing = "\n\n".join(file_contents)
-
-    # Run complexity scoring independently
     complexity = await score_complexity(source_dir, language)
 
-    # Compose the user prompt
     prompt = (
-        f"Analyze the AWS Lambda module '{module}' ({language}) at {source_dir}/ "
-        f"for migration to Azure Functions.\n\n"
+        f"Analyze the AWS Lambda module '{module}' ({language}) for migration "
+        f"to Azure Functions.\n\n"
         f"## Pre-computed Complexity Score\n"
         f"- Overall complexity: {complexity['overall']}\n"
         f"- AWS dependency count: {complexity['aws_dependency_count']}\n"
@@ -90,10 +106,6 @@ async def analyze_module(module: str, language: str, source_dir: str) -> str:
         f"Follow the output format from your system instructions exactly."
     )
 
-    # Execute with retry (handles transient LLM failures)
     result = await run_with_retry(agent, prompt, max_retries=3)
-
-    # Write the analysis output
     analysis_path.write_text(result, encoding="utf-8")
-
     return str(analysis_path)

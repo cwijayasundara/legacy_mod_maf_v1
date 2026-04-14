@@ -78,6 +78,10 @@ class MigrationRequest(BaseModel):
     title: str = Field(default="")
     description: str = Field(default="")
     acceptance_criteria: str = Field(default="")
+    source_paths: list[str] = Field(default_factory=list,
+        description="Optional explicit source paths. When provided, bypasses src/lambda/<module>/ lookup.")
+    context_paths: list[str] = Field(default_factory=list,
+        description="Optional read-only context paths shown to the migrator.")
 
 class MigrationResponse(BaseModel):
     status: str
@@ -149,12 +153,27 @@ async def status_all():
 def _validate(req: MigrationRequest):
     if req.language not in {"python", "node", "java", "csharp"}:
         raise HTTPException(400, f"Invalid language: {req.language}")
+    if req.source_paths:
+        for p in req.source_paths:
+            if not os.path.exists(p):
+                raise HTTPException(404, f"source path not found: {p}")
+        for p in req.context_paths:
+            if not os.path.exists(p):
+                raise HTTPException(404, f"context path not found: {p}")
+        return
+    # Legacy behaviour.
     source = os.path.join(PROJECT_ROOT, "src", "lambda", req.module)
     if not os.path.isdir(source):
         raise HTTPException(404, f"Lambda source not found at src/lambda/{req.module}/")
 
 
 async def _run_pipeline(req: MigrationRequest) -> MigrationResponse:
+    if _pipeline is None:
+        logger.warning("Pipeline not initialized; skipping background run for %s", req.module)
+        return MigrationResponse(
+            status="skipped", module=req.module, work_item_id=req.work_item_id,
+            message="pipeline not initialized",
+        )
     async with _semaphore:
         result: PipelineResult = await _pipeline.run(
             module=req.module,
@@ -285,4 +304,94 @@ async def get_discover(repo_id: str):
         approved=bool(run.get("approved")),
         approver=run.get("approver"),
         artifacts=artifacts,
+    )
+
+
+# ─── Migrate-repo (fan-out) ───────────────────────────────────────────────
+
+from agent_harness import fanout as _fanout
+
+
+class MigrateRepoRequest(BaseModel):
+    repo_id: str
+
+
+class MigrateRepoModuleStatus(BaseModel):
+    module: str
+    wave: int
+    status: str
+    reason: str = ""
+    review_score: int | None = None
+
+
+class MigrateRepoResultBody(BaseModel):
+    repo_id: str
+    run_id: int
+    status: str
+    modules: list[MigrateRepoModuleStatus] = Field(default_factory=list)
+
+
+class MigrateRepoAcceptedBody(BaseModel):
+    repo_id: str
+    run_id: int | None = None
+    status: str = "accepted"
+
+
+class MigrateRepoRunBody(BaseModel):
+    repo_id: str
+    id: int | None = None
+    status: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    modules: list[MigrateRepoModuleStatus] = Field(default_factory=list)
+
+
+def _assert_approved_or_409(repo_id: str) -> None:
+    if not _discovery_repo.is_backlog_approved(repo_id):
+        raise HTTPException(409,
+            f"backlog for {repo_id} is not approved; call /approve/backlog/{repo_id}")
+
+
+@app.post("/migrate-repo", response_model=MigrateRepoAcceptedBody)
+async def migrate_repo_async(req: MigrateRepoRequest, bg: BackgroundTasks):
+    _assert_approved_or_409(req.repo_id)
+
+    async def _run():
+        try:
+            await _fanout.migrate_repo(repo_id=req.repo_id,
+                                        repo=_discovery_repo,
+                                        pipeline=_pipeline)
+        except Exception:
+            logger.exception("migrate_repo background task failed")
+
+    bg.add_task(_run)
+    return MigrateRepoAcceptedBody(repo_id=req.repo_id)
+
+
+@app.post("/migrate-repo/sync", response_model=MigrateRepoResultBody)
+async def migrate_repo_sync(req: MigrateRepoRequest):
+    _assert_approved_or_409(req.repo_id)
+    try:
+        result = await _fanout.migrate_repo(
+            repo_id=req.repo_id, repo=_discovery_repo, pipeline=_pipeline,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    return MigrateRepoResultBody(
+        repo_id=result.repo_id, run_id=result.run_id, status=result.status,
+        modules=[MigrateRepoModuleStatus(**vars(m)) for m in result.modules],
+    )
+
+
+@app.get("/migrate-repo/{repo_id}", response_model=MigrateRepoRunBody)
+async def get_migrate_repo(repo_id: str):
+    run = _discovery_repo.get_migrate_repo_run(repo_id)
+    if run is None:
+        raise HTTPException(404, f"no migrate-repo run for {repo_id}")
+    return MigrateRepoRunBody(
+        repo_id=repo_id, id=run.get("id"),
+        status=run.get("status"),
+        started_at=run.get("started_at"),
+        completed_at=run.get("completed_at"),
+        modules=[MigrateRepoModuleStatus(**m) for m in run.get("modules", [])],
     )

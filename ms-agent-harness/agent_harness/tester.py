@@ -74,6 +74,8 @@ async def evaluate_module(
     language: str,
     contract: str,
     attempt: int = 1,
+    source_paths: list[str] | tuple = (),
+    context_paths: list[str] | tuple = (),
 ) -> str:
     """
     Run three-layer evaluation on a migrated module.
@@ -83,10 +85,17 @@ async def evaluate_module(
     out_dir = Path("migration-analysis") / module
     azure_dir = Path("src") / "azure-functions" / module
 
+    if source_paths:
+        src_listing = "Source files: " + ", ".join(source_paths)
+    else:
+        src_listing = f"Source Lambda: src/lambda/{module}/"
+    if context_paths:
+        src_listing += "\nRead-only context: " + ", ".join(context_paths)
+
     prompt = f"""Evaluate the migrated Azure Function for module '{module}' ({language}).
 Attempt: {attempt}/3
 
-Source Lambda: src/lambda/{module}/
+{src_listing}
 Migrated code: {azure_dir}/
 Sprint contract: {contract[:2000]}
 

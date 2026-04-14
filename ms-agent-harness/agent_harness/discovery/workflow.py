@@ -253,15 +253,18 @@ async def run_planning(repo_id: str, repo: MigrationRepository) -> Backlog:
     from .wave_scheduler import schedule
 
     inv_path = paths.inventory_path(repo_id)
+    graph_path = paths.graph_path(repo_id)
     stories_path = paths.stories_path(repo_id)
-    if not inv_path.exists() or not stories_path.exists():
-        missing = [str(p) for p in (inv_path, stories_path) if not p.exists()]
-        raise FileNotFoundError(f"missing artifact(s): {missing}")
+    for p in (inv_path, graph_path, stories_path):
+        if not p.exists():
+            raise FileNotFoundError(f"missing artifact: {p}")
 
     inventory = Inventory.model_validate_json(inv_path.read_text())
+    graph = DependencyGraph.model_validate_json(graph_path.read_text())
     stories = Stories.model_validate_json(stories_path.read_text())
     lang_by_module = {m.id: m.language for m in inventory.modules}
-    backlog = schedule(stories, language_by_module=lang_by_module)
+    backlog = schedule(stories, language_by_module=lang_by_module,
+                       inventory=inventory, graph=graph)
 
     out = paths.backlog_path(repo_id)
     out.parent.mkdir(parents=True, exist_ok=True)
