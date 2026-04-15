@@ -112,14 +112,14 @@ def _publish_downstream_event(*, ddb_id: str, event_type: str | None) -> None:
     event = EventGridEvent(
         subject="requestCreator",
         data=detail,
-        event_type="autografPipeline",
+        event_type="requestPipeline",
         data_version="1.0",
     )
     _event_grid_client().send([event])
 
 
 @app.function_name(name="request_creator")
-@app.route(route="autograf/filing/request", methods=[func.HttpMethod.POST])
+@app.route(route="filing/request", methods=[func.HttpMethod.POST])
 def handler(req: func.HttpRequest) -> func.HttpResponse:
     body = _parse_body(req)
     event_type = body.get("eventType")

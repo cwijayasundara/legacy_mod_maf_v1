@@ -2,8 +2,8 @@ param location string = resourceGroup().location
 param functionAppName string
 param storageAccountName string
 param cosmosAccountName string
-param cosmosDatabaseName string = 'autograf'
-param cosmosContainerName string = 'AutografRequests'
+param cosmosDatabaseName string = 'workflow'
+param cosmosContainerName string = 'RequestRecords'
 param serviceBusNamespaceName string
 param serviceBusTopicName string = 'validator'
 param appInsightsName string = '${functionAppName}-appi'

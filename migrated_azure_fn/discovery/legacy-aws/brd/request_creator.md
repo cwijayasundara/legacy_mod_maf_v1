@@ -2,7 +2,7 @@
 `request_creator` handles an incoming HTTP POST request for creating a filing request. It validates the minimum required request fields, applies jurisdiction/service-type gating for upstream requests, stores the original request payload in the main request DynamoDB table, and publishes an EventBridge event to start downstream processing in `dataGenerator`.
 
 ## Triggers
-- Invoked by an HTTP request to `/autograf/filing/request`.
+- Invoked by an HTTP request to `/filing/request`.
 - Expected to receive a request body that can be parsed by the shared `load_event_body` helper.
 - Triggered in response to client-submitted filing request creation, including normal upstream requests and special event types such as merge-evidence or order-resubmit.
 

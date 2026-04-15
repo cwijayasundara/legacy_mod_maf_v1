@@ -10,7 +10,7 @@
 ## Trigger Bindings (one entry per source AWS trigger)
 
 - **API Gateway → HTTP trigger**
-  - Route: `POST /autograf/filing/request`
+  - Route: `POST /filing/request`
   - Purpose: Accept client-submitted filing request creation payloads.
   - Notes: Use a standard HTTP response wrapper with validation failures returning structured 400/409 errors.
 
@@ -105,7 +105,7 @@
 
 - Deploy a Function App on the **Consumption** plan.
 - Define:
-  - HTTP-triggered function route `autograf/filing/request`
+  - HTTP-triggered function route `filing/request`
   - Cosmos DB account and containers for:
     - settings lookup
     - request persistence

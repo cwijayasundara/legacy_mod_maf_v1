@@ -5,8 +5,8 @@
 - Complexity: HIGH
 - Estimated effort: 12-16 hours
 - Migration order priority: 2
-- Inbound dependencies: request_creator, autografTriggerer/EventBridge producers, other modules that emit `detail.ddbId` for this handler
-- Outbound dependencies: DynamoDB `AutografRequests`, transformer service, EventBridge publisher to `validator`, shared error handler/Slack notification path
+- Inbound dependencies: request_creator, upstream EventBridge producers, other modules that emit `detail.ddbId` for this handler
+- Outbound dependencies: DynamoDB `RequestRecords`, transformer service, EventBridge publisher to `validator`, shared error handler/Slack notification path
 
 ## AWS Dependencies
 | AWS Service | SDK Package | Usage | Azure Equivalent | Azure SDK | Migration Notes |
@@ -39,7 +39,7 @@
 
 ## Inter-Service Dependencies
 - Upstream (who calls us):
-  - EventBridge source pipeline from `requestCreator` / `autografTriggerer`
+  - EventBridge source pipeline from `requestCreator` / upstream event producers
   - Exact caller list is not fully available from the provided source
 - Downstream (who we call):
   - DynamoDB via `aws.get_item` and `aws.update_item`
@@ -71,4 +71,3 @@
 
 ## Learned Rules Applied
 - None found or readable in the provided environment.
-

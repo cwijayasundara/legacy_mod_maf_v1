@@ -2,8 +2,8 @@ param location string = resourceGroup().location
 param functionAppName string
 param storageAccountName string
 param cosmosAccountName string
-param cosmosDatabaseName string = 'autograf'
-param requestContainerName string = 'AutografRequests'
+param cosmosDatabaseName string = 'workflow'
+param requestContainerName string = 'RequestRecords'
 param settingsContainerName string = 'ApplicationData'
 param eventGridTopicName string = 'dataGenerator'
 param appInsightsName string

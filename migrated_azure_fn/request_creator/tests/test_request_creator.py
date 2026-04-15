@@ -12,7 +12,7 @@ class DummyRequest:
     def __init__(self, body: object) -> None:
         self._body = body
         self.method = "POST"
-        self.url = "http://localhost/api/autograf/filing/request"
+        self.url = "http://localhost/api/filing/request"
         self.headers: dict[str, str] = {}
 
     def get_json(self) -> object:
