@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -74,10 +75,11 @@ async def run_stage(
 ) -> str:
     """Run one stage with caching + 3-attempt self-heal."""
     artifact_path = Path(artifact_path)
+    stage_started = time.perf_counter()
     if repo.stage_cache_hit(repo_id, stage_name, input_hash):
         cached = repo.get_cached_stage_path(repo_id, stage_name)
         if cached and Path(cached).exists():
-            logger.info("[%s] cache hit %s", stage_name, cached)
+            logger.info("[%s] cache hit %s (%.2fs)", stage_name, cached, time.perf_counter() - stage_started)
             return Path(cached).read_text(encoding="utf-8")
 
     feedback = ""
@@ -85,6 +87,7 @@ async def run_stage(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         observability.set_stage(stage_name, attempt)
         logger.info("[%s] attempt %d/%d", stage_name, attempt, MAX_ATTEMPTS)
+        attempt_started = time.perf_counter()
         try:
             if stage_timeout is not None:
                 result = await asyncio.wait_for(produce(feedback), timeout=stage_timeout)
@@ -99,13 +102,28 @@ async def run_stage(
             feedback = "\n\n## Critic feedback (apply this):\n" + "\n".join(
                 f"- {r}" for r in report.reasons)
             last = report
+            logger.warning("[%s] attempt %d timed out after %.2fs", stage_name, attempt, time.perf_counter() - attempt_started)
             continue
         report = critic(result, critic_context or {})
         if report.verdict == "PASS":
             artifact_path.parent.mkdir(parents=True, exist_ok=True)
             artifact_path.write_text(result, encoding="utf-8")
             repo.cache_stage(repo_id, stage_name, input_hash, str(artifact_path))
+            logger.info(
+                "[%s] passed on attempt %d in %.2fs (stage total %.2fs)",
+                stage_name,
+                attempt,
+                time.perf_counter() - attempt_started,
+                time.perf_counter() - stage_started,
+            )
             return result
+        logger.warning(
+            "[%s] attempt %d failed critic in %.2fs: %s",
+            stage_name,
+            attempt,
+            time.perf_counter() - attempt_started,
+            "; ".join(report.reasons[:3]) or "critic rejected output",
+        )
         feedback = (
             "\n\n## Critic feedback (apply this):\n"
             + "\n".join(f"- {r}" for r in report.reasons)
@@ -207,9 +225,14 @@ async def run_discovery(repo_id: str, repo_path: str,
     def _critic_brd(result: str, ctx: dict) -> CriticReport:
         return critique_brds(cached_brds, cached_sys, inventory, graph)
 
-    await run_stage(repo, repo_id, "brd", _produce_brd, _critic_brd,
+    brd_raw = await run_stage(repo, repo_id, "brd", _produce_brd, _critic_brd,
                     paths.brd_dir(repo_id) / "_summary.json", b_hash,
                     stage_timeout=_settings.timeout_for("brd"))
+    # Rehydrate in-memory BRDs when this stage was a cache hit (produce closure didn't run).
+    if not cached_brds or cached_sys is None:
+        brd_payload = json.loads(brd_raw)
+        cached_brds = [ModuleBRD.model_validate(m) for m in brd_payload.get("modules", [])]
+        cached_sys = SystemBRD.model_validate(brd_payload["system"])
 
     # Stage 4: architect
     d_hash = hash_inputs(repo_id, "architect", [raw_inv, raw_graph,
@@ -230,9 +253,14 @@ async def run_discovery(repo_id: str, repo_path: str,
         return critique_designs(cached_designs, cached_sys_design,
                                 inventory, graph, cached_brds)
 
-    await run_stage(repo, repo_id, "architect", _produce_design, _critic_design,
+    design_raw = await run_stage(repo, repo_id, "architect", _produce_design, _critic_design,
                     paths.design_dir(repo_id) / "_summary.json", d_hash,
                     stage_timeout=_settings.timeout_for("architect"))
+    # Rehydrate in-memory designs when this stage was a cache hit.
+    if not cached_designs or cached_sys_design is None:
+        design_payload = json.loads(design_raw)
+        cached_designs = [ModuleDesign.model_validate(m) for m in design_payload.get("modules", [])]
+        cached_sys_design = SystemDesign.model_validate(design_payload["system"])
 
     # Stage 5: stories
     s_hash = hash_inputs(repo_id, "stories", [raw_inv, raw_graph,

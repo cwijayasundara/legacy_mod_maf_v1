@@ -8,6 +8,8 @@ from agent-framework with @tool-decorated functions.
 import asyncio
 import logging
 import os
+from collections import deque
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Load .env before any SDK imports (they may read OPENAI_API_KEY at import time)
@@ -30,6 +32,8 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 DISCOVERY_PROMPTS_DIR = Path(__file__).parent / "discovery" / "prompts"
 
 _settings: Settings | None = None
+_request_gate: "_RequestGate | None" = None
+_request_gate_signature: tuple[float, float, int] | None = None
 
 
 def get_settings() -> Settings:
@@ -37,6 +41,78 @@ def get_settings() -> Settings:
     if _settings is None:
         _settings = load_settings()
     return _settings
+
+
+class _RequestGate:
+    """Shared throttle for outbound model calls."""
+
+    def __init__(self, max_requests: float, window_seconds: float, max_in_flight: int):
+        self._max_requests = max(1.0, float(max_requests))
+        self._window_seconds = max(0.01, float(window_seconds))
+        self._semaphore = asyncio.Semaphore(max(1, int(max_in_flight)))
+        self._starts: deque[float] = deque()
+        self._lock = asyncio.Lock()
+
+    async def _acquire_window_slot(self) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            wait_for = 0.0
+            async with self._lock:
+                now = loop.time()
+                cutoff = now - self._window_seconds
+                while self._starts and self._starts[0] <= cutoff:
+                    self._starts.popleft()
+
+                if len(self._starts) < self._max_requests:
+                    self._starts.append(now)
+                    return
+
+                wait_for = max(0.01, self._starts[0] + self._window_seconds - now)
+
+            logger.info(
+                "Model-call gate delaying %.2fs to stay within %.0f requests per %.1fs",
+                wait_for,
+                self._max_requests,
+                self._window_seconds,
+            )
+            await asyncio.sleep(wait_for)
+
+    @asynccontextmanager
+    async def slot(self):
+        await self._semaphore.acquire()
+        try:
+            await self._acquire_window_slot()
+            yield
+        finally:
+            self._semaphore.release()
+
+
+def _rate_limit_signature(settings: Settings) -> tuple[float, float, int]:
+    rpm = float(os.environ.get(
+        "OPENAI_REQUESTS_PER_MINUTE",
+        settings.rate_limits.requests_per_minute,
+    ))
+    window = float(os.environ.get(
+        "OPENAI_SLIDING_WINDOW_SECONDS",
+        settings.rate_limits.sliding_window_seconds,
+    ))
+    max_in_flight = int(os.environ.get("OPENAI_CALL_CONCURRENCY", "2"))
+    return rpm, window, max_in_flight
+
+
+def _get_request_gate(settings: Settings) -> _RequestGate:
+    global _request_gate, _request_gate_signature
+    signature = _rate_limit_signature(settings)
+    if _request_gate is None or _request_gate_signature != signature:
+        _request_gate = _RequestGate(*signature)
+        _request_gate_signature = signature
+        logger.info(
+            "Configured model-call gate: rpm=%.0f window=%.1fs concurrency=%d",
+            signature[0],
+            signature[1],
+            signature[2],
+        )
+    return _request_gate
 
 
 def create_chat_client(model: str | None = None):
@@ -157,15 +233,20 @@ def _load_program() -> str:
     return ""
 
 
-async def run_with_retry(agent: "Agent", message: str, max_retries: int = 3) -> str:
+async def run_with_retry(agent: "Agent", message: str, max_retries: int | None = None) -> str:
     """Run an agent with exponential backoff on rate-limit / timeout errors."""
     from . import observability  # local import to avoid cycles
 
-    timeout = get_settings().timeouts.per_call_seconds
+    settings = get_settings()
+    timeout = settings.timeouts.per_call_seconds
+    request_gate = _get_request_gate(settings)
+    if max_retries is None:
+        max_retries = int(os.environ.get("AGENT_MAX_RETRIES", "6"))
 
     for attempt in range(max_retries):
         try:
-            result = await asyncio.wait_for(agent.run(message), timeout=timeout)
+            async with request_gate.slot():
+                result = await asyncio.wait_for(agent.run(message), timeout=timeout)
         except asyncio.TimeoutError:
             logger.warning("agent.run timeout after %ds (attempt %d/%d)",
                             timeout, attempt + 1, max_retries)
@@ -177,7 +258,8 @@ async def run_with_retry(agent: "Agent", message: str, max_retries: int = 3) -> 
             error_str = str(e).lower()
 
             if "rate_limit" in error_str or "429" in error_str:
-                wait = (2 ** attempt) + (asyncio.get_event_loop().time() % 1)
+                # Exponential backoff capped at 120s; gives quota time to replenish.
+                wait = min(120.0, 10.0 * (2 ** attempt)) + (asyncio.get_running_loop().time() % 1)
                 logger.warning("Rate limited (attempt %d/%d), waiting %.1fs",
                                 attempt + 1, max_retries, wait)
                 await asyncio.sleep(wait)

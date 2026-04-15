@@ -1,11 +1,14 @@
-"""Single source of truth for discovery artifact paths."""
+"""Single source of truth for discovery artifact paths.
+
+All paths resolve under MIGRATED_DIR/discovery/ via agent_harness.paths.
+"""
 from pathlib import Path
 
-DISCOVERY_ROOT = Path("discovery")
+from .. import paths as _artifacts
 
 
 def repo_dir(repo_id: str) -> Path:
-    return DISCOVERY_ROOT / repo_id
+    return _artifacts.discovery_dir(repo_id)
 
 
 def inventory_path(repo_id: str) -> Path:

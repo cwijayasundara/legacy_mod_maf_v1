@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -133,6 +134,7 @@ class MigrationPipeline:
         context_paths = list(context_paths) if context_paths else []
 
         logger.info("Pipeline starting: %s (%s)", module, language)
+        pipeline_started = time.perf_counter()
         run_id = self.repo.start_run(module, language, work_item_id)
 
         # Derive repo_root + module_path for AGENTS.md injection (sub-project D.1).
@@ -144,11 +146,12 @@ class MigrationPipeline:
             module_path = os.path.join(self.project_root, "src", "lambda", module)
             repo_root = self.project_root
 
+        from .paths import analysis_dir as _analysis_dir, infra_dir as _infra_dir, migrated_dir as _migrated_dir
         source_dir = os.path.join(self.project_root, "src", "lambda", module)
-        output_dir = os.path.join(self.project_root, "migration-analysis", module)
+        output_dir = str(_analysis_dir(module))
         os.makedirs(output_dir, exist_ok=True)
-        os.makedirs(os.path.join(self.project_root, "src", "azure-functions", module), exist_ok=True)
-        os.makedirs(os.path.join(self.project_root, "infrastructure", module), exist_ok=True)
+        os.makedirs(_migrated_dir(module), exist_ok=True)
+        os.makedirs(_infra_dir(module), exist_ok=True)
 
         gates_passed = []
         gates_failed = []
@@ -158,10 +161,13 @@ class MigrationPipeline:
             observability.set_stage("analyzer", attempt=1)
             logger.info("[Gate 1] Running analyzer for %s", module)
             cached = self.repo.get_cached_analysis(module)
-            if cached:
+            cached_path = cached.get("analysis_text", "") if cached else ""
+            if cached and cached_path and Path(cached_path).is_file():
                 logger.info("Using cached analysis for %s", module)
-                analysis = cached.get("analysis_text", "")
+                analysis = cached_path
             else:
+                if cached and cached_path:
+                    logger.info("Cached analysis file missing (%s); re-running analyzer", cached_path)
                 try:
                     analysis = await _with_stage_timeout(
                         self.settings, "analyzer",
@@ -184,32 +190,164 @@ class MigrationPipeline:
                     score=0, level="UNKNOWN",
                 )
             gates_passed.append(1)
+            logger.info("[Gate 1] Analyzer complete for %s in %.2fs", module, time.perf_counter() - pipeline_started)
 
             # ─── Gate 2: Sprint Contract Negotiation ───────────────────
+            contract_started = time.perf_counter()
             logger.info("[Contract] Coder proposing sprint contract for %s", module)
             contract = await propose_contract(module, language, analysis, acceptance_criteria)
 
             logger.info("[Contract] Tester finalizing sprint contract for %s", module)
             contract = await finalize_contract(module, contract)
             gates_passed.append(2)
+            logger.info("[Contract] Finalized for %s in %.2fs", module, time.perf_counter() - contract_started)
 
-            # ─── Gates 3-5: Self-Healing Migration Loop ────────────────
+            # ─── Gates 3-6: Outer self-heal loop ────────────────────────
+            # Each outer iteration: run coder<->tester to PASS, then reviewer.
+            # If reviewer BLOCKED/CHANGES_REQUESTED, fold its findings into
+            # eval-failures.json so the next coder pass reads them as failure
+            # context (existing mechanism in coder.py) and regenerates code.
             max_attempts = self.settings.quality.max_self_healing_attempts
+            # initial run + optional reviewer-driven retry; env-override for speed.
+            max_reviewer_attempts = int(os.environ.get("MAX_REVIEWER_ATTEMPTS", "1"))
             migration_passed = False
+            approved = False
+            review_result: dict = {}
+            reviewer_attempt = 0
 
-            for attempt in range(1, max_attempts + 1):
-                logger.info("[Gate 3] Migration attempt %d/%d for %s", attempt, max_attempts, module)
+            while reviewer_attempt < max_reviewer_attempts:
+                reviewer_attempt += 1
+                if reviewer_attempt > 1:
+                    logger.info(
+                        "[Gate 6-retry] Reviewer rejected; regenerating %s with review feedback (outer %d/%d)",
+                        module, reviewer_attempt, max_reviewer_attempts,
+                    )
+                    # Reset inner state so the inner loop runs again.
+                    migration_passed = False
+                    gates_passed = [g for g in gates_passed if g not in (3, 4, 5, 6)]
+                    gates_failed = [g for g in gates_failed if g not in (3, 4, 5, 6)]
 
-                # Coder migrates
-                observability.set_stage("coder", attempt=attempt)
+                for attempt in range(1, max_attempts + 1):
+                    logger.info("[Gate 3] Migration attempt %d/%d for %s", attempt, max_attempts, module)
+                    attempt_started = time.perf_counter()
+
+                    # Coder migrates
+                    observability.set_stage("coder", attempt=attempt)
+                    try:
+                        await _with_stage_timeout(
+                            self.settings, "coder",
+                            migrate_module(
+                                module=module, language=language, source_dir=source_dir,
+                                analysis_path=analysis, attempt=attempt,
+                                source_paths=source_paths, context_paths=context_paths,
+                                repo_root=repo_root, module_path=module_path,
+                            ),
+                        )
+                    except _StageTimeout as exc:
+                        self.repo.complete_run(run_id, "blocked", str(exc))
+                        await self.state.push_state()
+                        return PipelineResult(
+                            module=module, status="blocked", message=str(exc),
+                            gates_failed=[3],
+                        )
+                    gates_passed.append(3) if 3 not in gates_passed else None
+
+                    # Tester evaluates
+                    observability.set_stage("tester", attempt=attempt)
+                    logger.info("[Gate 4-5] Tester evaluating %s (attempt %d)", module, attempt)
+                    # Post-codegen agents (tester/reviewer/security) operate on the
+                    # GENERATED tree under MIGRATED_DIR. Their file-tool jail must
+                    # point there so list_directory/read_file find the new files.
+                    target_root = str(_migrated_dir(module).parent)
+                    target_module_path = str(_migrated_dir(module))
+                    try:
+                        eval_result = await _with_stage_timeout(
+                            self.settings, "tester",
+                            evaluate_module(
+                                module=module, language=language, contract=contract,
+                                attempt=attempt,
+                                source_paths=source_paths, context_paths=context_paths,
+                                repo_root=target_root, module_path=target_module_path,
+                            ),
+                        )
+                    except _StageTimeout as exc:
+                        self.repo.complete_run(run_id, "blocked", str(exc))
+                        await self.state.push_state()
+                        return PipelineResult(
+                            module=module, status="blocked", message=str(exc),
+                            gates_failed=[4, 5],
+                        )
+
+                    if "PASS" in eval_result.upper():
+                        migration_passed = True
+                        if 4 not in gates_passed:
+                            gates_passed.append(4)
+                        if 5 not in gates_passed:
+                            gates_passed.append(5)
+                        logger.info(
+                            "Migration PASSED for %s on attempt %d in %.2fs",
+                            module,
+                            attempt,
+                            time.perf_counter() - attempt_started,
+                        )
+                        break
+                    else:
+                        logger.warning(
+                            "Migration FAILED for %s on attempt %d in %.2fs",
+                            module,
+                            attempt,
+                            time.perf_counter() - attempt_started,
+                        )
+                        if attempt == max_attempts:
+                            # Write blocked.md
+                            blocked_path = os.path.join(output_dir, "blocked.md")
+                            Path(blocked_path).write_text(
+                                f"# Blocked: {module}\n\n"
+                                f"Migration failed after {max_attempts} self-healing attempts.\n\n"
+                                f"## Last Evaluation Result\n{eval_result}\n\n"
+                                f"## Recommendation\nRequires human intervention.\n"
+                            )
+                            self.state.append_failure(
+                                f"### {module} — Blocked — {_now()}\n"
+                                f"- Attempts: {max_attempts}\n"
+                                f"- Last result: {eval_result[:200]}\n"
+                            )
+
+                if not migration_passed:
+                    gates_failed.extend([g for g in [3, 4, 5] if g not in gates_passed])
+                    self.repo.complete_run(run_id, "blocked", "Failed after 3 self-healing attempts")
+                    await self._update_progress(module, language, work_item_id, "blocked", gates_passed, gates_failed)
+                    await self.state.push_state()
+                    return PipelineResult(
+                        module=module,
+                        status="blocked",
+                        message=f"Blocked after {max_attempts} attempts. See blocked.md.",
+                        gates_passed=gates_passed,
+                        gates_failed=gates_failed,
+                    )
+
+                # Pre-commit quality checks
+                # Scope architectural checks to the generated module tree.
+                # Scanning the whole workspace can walk .venv and unrelated
+                # repos, which makes post-test quality gates appear hung.
+                arch_violations = check_architecture(str(_migrated_dir(module)))
+                quality_issues = check_directory(str(_migrated_dir(module)))
+                blocking = [i for i in quality_issues if i.severity == "BLOCK"]
+                if arch_violations or blocking:
+                    logger.warning("Quality gate: %d arch violations, %d blocking issues", len(arch_violations), len(blocking))
+
+                # ─── Gate 6: Reviewer ──────────────────────────────────────
+                observability.set_stage("reviewer", attempt=reviewer_attempt)
+                logger.info("[Gate 6] Running reviewer for %s (outer %d/%d)",
+                            module, reviewer_attempt, max_reviewer_attempts)
+                reviewer_started = time.perf_counter()
                 try:
-                    await _with_stage_timeout(
-                        self.settings, "coder",
-                        migrate_module(
-                            module=module, language=language, source_dir=source_dir,
-                            analysis_path=analysis, attempt=attempt,
-                            source_paths=source_paths, context_paths=context_paths,
-                            repo_root=repo_root, module_path=module_path,
+                    review_result = await _with_stage_timeout(
+                        self.settings, "reviewer",
+                        review_module(
+                            module=module, language=language,
+                            repo_root=str(_migrated_dir(module).parent),
+                            module_path=str(_migrated_dir(module)),
                         ),
                     )
                 except _StageTimeout as exc:
@@ -217,118 +355,44 @@ class MigrationPipeline:
                     await self.state.push_state()
                     return PipelineResult(
                         module=module, status="blocked", message=str(exc),
-                        gates_failed=[3],
-                    )
-                gates_passed.append(3) if 3 not in gates_passed else None
-
-                # Tester evaluates
-                observability.set_stage("tester", attempt=attempt)
-                logger.info("[Gate 4-5] Tester evaluating %s (attempt %d)", module, attempt)
-                try:
-                    eval_result = await _with_stage_timeout(
-                        self.settings, "tester",
-                        evaluate_module(
-                            module=module, language=language, contract=contract,
-                            attempt=attempt,
-                            source_paths=source_paths, context_paths=context_paths,
-                            repo_root=repo_root, module_path=module_path,
-                        ),
-                    )
-                except _StageTimeout as exc:
-                    self.repo.complete_run(run_id, "blocked", str(exc))
-                    await self.state.push_state()
-                    return PipelineResult(
-                        module=module, status="blocked", message=str(exc),
-                        gates_failed=[4, 5],
+                        gates_failed=[6],
                     )
 
-                if "PASS" in eval_result.upper():
-                    migration_passed = True
-                    if 4 not in gates_passed:
-                        gates_passed.append(4)
-                    if 5 not in gates_passed:
-                        gates_passed.append(5)
-                    logger.info("Migration PASSED for %s on attempt %d", module, attempt)
+                approved = "APPROVE" in review_result.get("recommendation", "").upper()
+                score = review_result.get("confidence", review_result.get("confidence_score", 0))
+
+                if approved:
+                    gates_passed.append(6)
+                    self.repo.complete_run(run_id, "completed")
+                    status = "completed"
+                    message = f"Migration approved (score: {score}/100)"
+                    logger.info("[Gate 6] Reviewer approved %s in %.2fs", module, time.perf_counter() - reviewer_started)
                     break
-                else:
-                    logger.warning("Migration FAILED for %s on attempt %d", module, attempt)
-                    if attempt == max_attempts:
-                        # Write blocked.md
-                        blocked_path = os.path.join(output_dir, "blocked.md")
-                        Path(blocked_path).write_text(
-                            f"# Blocked: {module}\n\n"
-                            f"Migration failed after {max_attempts} self-healing attempts.\n\n"
-                            f"## Last Evaluation Result\n{eval_result}\n\n"
-                            f"## Recommendation\nRequires human intervention.\n"
-                        )
-                        self.state.append_failure(
-                            f"### {module} — Blocked — {_now()}\n"
-                            f"- Attempts: {max_attempts}\n"
-                            f"- Last result: {eval_result[:200]}\n"
-                        )
 
-            if not migration_passed:
-                gates_failed.extend([g for g in [3, 4, 5] if g not in gates_passed])
-                self.repo.complete_run(run_id, "blocked", "Failed after 3 self-healing attempts")
-                await self._update_progress(module, language, work_item_id, "blocked", gates_passed, gates_failed)
-                await self.state.push_state()
-                return PipelineResult(
-                    module=module,
-                    status="blocked",
-                    message=f"Blocked after {max_attempts} attempts. See blocked.md.",
-                    gates_passed=gates_passed,
-                    gates_failed=gates_failed,
-                )
+                # Reviewer rejected. If we have another outer attempt, fold the
+                # findings into eval-failures.json so the next coder iteration
+                # reads them via its existing failure-context path and retries.
+                if reviewer_attempt < max_reviewer_attempts:
+                    _write_review_feedback_for_coder(module, review_result)
+                    continue
 
-            # Pre-commit quality checks
-            arch_violations = check_architecture(self.project_root)
-            quality_issues = check_directory(os.path.join(self.project_root, "src", "azure-functions", module))
-            blocking = [i for i in quality_issues if i.severity == "BLOCK"]
-            if arch_violations or blocking:
-                logger.warning("Quality gate: %d arch violations, %d blocking issues", len(arch_violations), len(blocking))
-
-            # ─── Gate 6: Reviewer ──────────────────────────────────────
-            observability.set_stage("reviewer", attempt=1)
-            logger.info("[Gate 6] Running reviewer for %s", module)
-            try:
-                review_result = await _with_stage_timeout(
-                    self.settings, "reviewer",
-                    review_module(
-                        module=module, language=language,
-                        repo_root=repo_root, module_path=module_path,
-                    ),
-                )
-            except _StageTimeout as exc:
-                self.repo.complete_run(run_id, "blocked", str(exc))
-                await self.state.push_state()
-                return PipelineResult(
-                    module=module, status="blocked", message=str(exc),
-                    gates_failed=[6],
-                )
-
-            approved = "APPROVE" in review_result.get("recommendation", "").upper()
-            score = review_result.get("confidence_score", 0)
-
-            if approved:
-                gates_passed.append(6)
-                self.repo.complete_run(run_id, "completed")
-                status = "completed"
-                message = f"Migration approved (score: {score}/100)"
-            else:
                 gates_failed.append(6)
                 self.repo.complete_run(run_id, "changes_requested")
                 status = "changes_requested"
                 message = f"Reviewer: {review_result.get('recommendation', 'UNKNOWN')} (score: {score}/100)"
+                logger.info("[Gate 6] Reviewer completed for %s in %.2fs with %s", module, time.perf_counter() - reviewer_started, status)
 
             # ─── Gate 7: Security Review ──────────────────────────────────────
             observability.set_stage("security", attempt=1)
             logger.info("[Gate 7] Running security reviewer for %s", module)
+            security_started = time.perf_counter()
             try:
                 security_result = await _with_stage_timeout(
                     self.settings, "security",
                     security_review(
                         module=module, language=language,
-                        repo_root=repo_root, module_path=module_path,
+                        repo_root=str(_migrated_dir(module).parent),
+                        module_path=str(_migrated_dir(module)),
                     ),
                 )
             except _StageTimeout as exc:
@@ -342,6 +406,7 @@ class MigrationPipeline:
                 gates_failed.append(7)
             else:
                 gates_passed.append(7)
+            logger.info("[Gate 7] Security review complete for %s in %.2fs", module, time.perf_counter() - security_started)
 
             # Update coverage ratchet
             coverage = review_result.get("coverage")
@@ -374,6 +439,8 @@ class MigrationPipeline:
                 gates_passed=gates_passed,
                 gates_failed=gates_failed,
             )
+        finally:
+            logger.info("Pipeline finished: %s in %.2fs", module, time.perf_counter() - pipeline_started)
 
     async def _update_progress(
         self, module, language, work_item_id, status,
@@ -398,3 +465,43 @@ class MigrationPipeline:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _write_review_feedback_for_coder(module: str, review_result: dict) -> None:
+    """Persist reviewer verdict into eval-failures.json so the next coder pass
+    reads it via the existing ``attempt > 1`` failure-context path in coder.py.
+
+    The coder treats any eval-failures.json as prior-attempt context; by
+    layering reviewer findings on top we let the same self-heal plumbing
+    handle reviewer-driven retries.
+    """
+    from .paths import analysis_dir as _analysis_dir
+
+    out_dir = _analysis_dir(module)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    failures_path = out_dir / "eval-failures.json"
+    review_path = out_dir / "review.md"
+    review_text = ""
+    if review_path.is_file():
+        review_text = review_path.read_text(encoding="utf-8", errors="replace")
+
+    payload = {
+        "module": module,
+        "source": "reviewer",
+        "recorded_at": _now(),
+        "recommendation": review_result.get("recommendation"),
+        "confidence": review_result.get(
+            "confidence", review_result.get("confidence_score")
+        ),
+        "blocking_issues": review_result.get("blocking_issues", []),
+        "review_markdown": review_text,
+        "guidance": (
+            "The reviewer BLOCKED this migration. Treat each blocking issue as "
+            "a hard requirement for the next generation pass. In particular: "
+            "replace any in-memory stand-ins with real Azure SDK clients, "
+            "remove broad `except Exception` handlers, preserve the legacy "
+            "response contract, and ensure tests exercise the Azure Function "
+            "entrypoint — not only internal helpers."
+        ),
+    }
+    failures_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

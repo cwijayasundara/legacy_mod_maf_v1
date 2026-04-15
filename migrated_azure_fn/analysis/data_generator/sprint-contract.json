@@ -1,0 +1,145 @@
+{
+  "module": "data_generator",
+  "source_handler": "handlers/data_generator.py",
+  "language": "python",
+  "proposed_by": "migration-coder",
+  "proposed_at": "2026-04-15T16:05:05.742157+00:00",
+  "finalized_by": "migration-tester",
+  "finalized_at": "2026-04-15T00:00:00Z",
+  "unit_checks": [
+    {
+      "function": "handler(event, context)",
+      "expected_behavior": "returns {\"ok\": false, \"reason\": \"missing ddbId\"} when event.detail.ddbId is absent or empty"
+    },
+    {
+      "function": "handler(event, context)",
+      "expected_behavior": "reads the record identified by event.detail.ddbId and returns {\"ok\": true, \"ddbId\": ddb_id} on success"
+    },
+    {
+      "function": "handler(event, context)",
+      "expected_behavior": "propagates runtime failures into a failure payload containing ok=false, the ddbId when available, and a stringified error"
+    },
+    {
+      "function": "handler(event, context)",
+      "expected_behavior": "raises or fails deterministically when the backing record is missing, matching the legacy RuntimeError behavior"
+    },
+    {
+      "function": "transformer path inside handler",
+      "expected_behavior": "preserves transformation order: load request JSON, transform via TransformerFactory.transform_to_filer_json, persist mergedJSON and transformedJSON, then update transformed status"
+    },
+    {
+      "function": "error path",
+      "expected_behavior": "invokes shared error handling side effects that mark the record as EXCEPTION and trigger notification delivery"
+    },
+    {
+      "function": "handler(event, context)",
+      "expected_behavior": "accepts events with extra fields without rejecting them, as long as detail.ddbId is present"
+    },
+    {
+      "function": "handler(event, context)",
+      "expected_behavior": "treats null, empty string, or whitespace-only ddbId as missing and returns {\"ok\": false, \"reason\": \"missing ddbId\"}"
+    }
+  ],
+  "integration_checks": [
+    {
+      "interaction": "DynamoDB read",
+      "verification": "Azure implementation must construct a real Azure data client lazily and mockable, with tests intercepting the client factory and verifying a single record lookup by ID"
+    },
+    {
+      "interaction": "DynamoDB update",
+      "verification": "tests must verify writes for mergedJSON, transformedJSON, status.transformed, and finalStatus occur through the same repository/adapter owner"
+    },
+    {
+      "interaction": "downstream publish",
+      "verification": "tests must verify an Azure message/event publisher is invoked once with a payload containing ddbId for the validator destination"
+    },
+    {
+      "interaction": "error side effects",
+      "verification": "tests must verify the exception path updates record state to EXCEPTION and emits the configured notification side effect without reaching real Azure or Slack endpoints"
+    }
+  ],
+  "contract_checks": [
+    {
+      "input_schema": "EventBridge-style event object containing detail.ddbId",
+      "required_fields": [
+        "detail",
+        "detail.ddbId"
+      ],
+      "validation_rules": [
+        "missing detail.ddbId returns ok=false and reason=missing ddbId",
+        "null, empty, or whitespace-only detail.ddbId returns ok=false and reason=missing ddbId",
+        "event payload must be accepted without requiring extra fields"
+      ]
+    },
+    {
+      "output_schema_success": {
+        "ok": true,
+        "ddbId": "<string>"
+      },
+      "validation_rules": [
+        "success response must preserve ok=true and echo the ddbId"
+      ]
+    },
+    {
+      "output_schema_validation_failure": {
+        "ok": false,
+        "reason": "missing ddbId"
+      },
+      "validation_rules": [
+        "validation failure must not raise",
+        "reason string must match legacy contract"
+      ]
+    },
+    {
+      "output_schema_runtime_failure": {
+        "ok": false,
+        "ddbId": "<string?>",
+        "error": "<string>"
+      },
+      "validation_rules": [
+        "runtime failure payload must include an error string",
+        "ddbId must be included when it was available from the input"
+      ]
+    }
+  ],
+  "architecture_checks": [
+    {
+      "required_files": [
+        "data_generator/function_app.py",
+        "data_generator/requirements.txt",
+        "data_generator/host.json",
+        "data_generator/local.settings.json",
+        "data_generator/tests/test_data_generator.py",
+        "infrastructure/data_generator/main.bicep"
+      ]
+    },
+    {
+      "required_code_constraints": [
+        "no aws imports anywhere in production code or tests",
+        "no module-scope Azure SDK client construction",
+        "lazy client factories only",
+        "tests must mock all Azure SDK network calls",
+        "HTTP trigger only if the source contract is explicitly re-mapped; otherwise preserve event-driven trigger semantics",
+        "every public function must have type annotations",
+        "no bare except and no NotImplementedError or pass stubs in production code"
+      ]
+    },
+    {
+      "bicep_constraints": [
+        "Bicep must declare the Azure Function App",
+        "Bicep must declare a storage account required by Azure Functions",
+        "Bicep must declare the selected backing data resource (Cosmos DB or Table Storage) used by the migrated repository",
+        "Bicep must declare any downstream eventing resource used for validator publication",
+        "Bicep must enable managed identity and Application Insights",
+        "Bicep app settings must reference Key Vault for secrets where applicable"
+      ]
+    },
+    {
+      "coverage_constraints": [
+        "minimum 80% code coverage",
+        "coverage must not drop below the current baseline",
+        "every public function and the decorated entrypoint must have at least one test"
+      ]
+    }
+  ]
+}

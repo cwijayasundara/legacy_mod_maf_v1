@@ -1,5 +1,0 @@
-# module-name	language	work-item-id	depends-on
-order-processor	python	WI-1001
-# Add more modules here, e.g.:
-# payment-handler	python	WI-1002
-# user-api	node	WI-1003	order-processor

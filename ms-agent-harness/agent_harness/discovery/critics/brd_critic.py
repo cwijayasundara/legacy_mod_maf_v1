@@ -22,7 +22,14 @@ def critique_brds(modules: list[ModuleBRD], system: SystemBRD,
             if not _section_has_content(b.body, section):
                 reasons.append(f"module {b.module_id}: missing {section} section")
 
-    resource_ids = {n.id for n in graph.nodes if n.kind == "aws_resource"}
+    # Only hold BRDs accountable for resources whose name is actually known.
+    # Grapher placeholder IDs like `dynamodb_table:<unknown:abc123>` cannot be
+    # cited by name in prose — including them just forces critic failure.
+    resource_ids = {
+        n.id for n in graph.nodes
+        if n.kind == "aws_resource"
+        and "<unknown:" not in n.id
+    }
     referenced = set()
     for b in modules:
         side = _section_text(b.body, "Side Effects")

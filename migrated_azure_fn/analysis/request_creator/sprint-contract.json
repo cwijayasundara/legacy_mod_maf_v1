@@ -1,0 +1,204 @@
+{
+  "module": "request_creator",
+  "language": "python",
+  "complexity": "HIGH",
+  "estimated_effort_hours": 12,
+  "proposed_by": "migration-coder",
+  "proposed_at": "2026-04-15T16:05:21.814101+00:00",
+  "finalized_by": "migration-tester",
+  "unit_checks": [
+    {
+      "function": "handler",
+      "behavior": "returns 400 when serviceType is missing from the request body",
+      "expected": "HTTP 400 with JSON error body and no Cosmos/Event Grid calls"
+    },
+    {
+      "function": "handler",
+      "behavior": "returns 400 when cidPin is required by settings but missing from the request body",
+      "expected": "HTTP 400 with JSON error body and no request record write or event publish"
+    },
+    {
+      "function": "handler",
+      "behavior": "returns 409 when jurisdiction/service combination is disabled by settings lookup",
+      "expected": "HTTP 409 with JSON error body and no request record write or event publish"
+    },
+    {
+      "function": "handler",
+      "behavior": "returns 200 on valid request input and persists request record",
+      "expected": "HTTP 200 with body {\"ddbId\": string, \"status\": \"CREATED\"}"
+    },
+    {
+      "function": "handler",
+      "behavior": "uses UPSTREAM as the default source when source is omitted",
+      "expected": "request processing follows the UPSTREAM validation path"
+    },
+    {
+      "function": "handler",
+      "behavior": "adds branch to downstream event detail for MERGE_EVIDENCE and ORDER_RESUBMIT event types",
+      "expected": "published event detail contains branch field"
+    },
+    {
+      "function": "handler",
+      "behavior": "returns 400 when the request body is missing, empty, or invalid JSON",
+      "expected": "HTTP 400 with JSON error body and no Cosmos/Event Grid calls"
+    },
+    {
+      "function": "handler",
+      "behavior": "returns 400 when required jurisdiction is missing for a jurisdiction-gated request",
+      "expected": "HTTP 400 with JSON error body and no request record write or event publish"
+    },
+    {
+      "function": "_lookup_jurisdiction_settings",
+      "behavior": "loads settings for the requested jurisdiction/service combination",
+      "expected": "returns structured settings data used by validation logic"
+    }
+  ],
+  "integration_checks": [
+    {
+      "service": "Cosmos DB",
+      "interaction": "constructs CosmosClient with DefaultAzureCredential and uses the settings container for lookup",
+      "verify": "mock CosmosClient, get_database_client, and get_container_client; assert expected item read/query call occurs"
+    },
+    {
+      "service": "Cosmos DB",
+      "interaction": "constructs CosmosClient with DefaultAzureCredential and upserts the request record into the request container",
+      "verify": "mock upsert_item call with generated ddbId and request payload"
+    },
+    {
+      "service": "Event Grid",
+      "interaction": "publishes downstream event to dataGenerator with preserved source/destination/detail payload shape",
+      "verify": "mock EventGridPublisherClient send call and assert event body fields are correct"
+    },
+    {
+      "service": "Azure identity",
+      "interaction": "uses DefaultAzureCredential for all Azure client authentication",
+      "verify": "patch DefaultAzureCredential and assert it is instantiated lazily inside client factory functions"
+    }
+  ],
+  "contract_checks": [
+    {
+      "request_schema": {
+        "required_fields": [
+          "serviceType"
+        ],
+        "optional_fields": [
+          "jurisdiction",
+          "eventType",
+          "source",
+          "cidPin"
+        ],
+        "defaults": {
+          "source": "UPSTREAM"
+        }
+      },
+      "response_schema": {
+        "success": {
+          "status_code": 200,
+          "body_fields": [
+            "ddbId",
+            "status"
+          ],
+          "status_value": "CREATED"
+        },
+        "validation_error": {
+          "status_code": [
+            400,
+            409
+          ],
+          "body_shape": {
+            "error": {
+              "code": "string",
+              "message": "string",
+              "details": []
+            }
+          }
+        },
+        "unexpected_error": {
+          "status_code": 500,
+          "body_shape": {
+            "error": {
+              "code": "string",
+              "message": "string",
+              "details": []
+            },
+            "ddbId": "string"
+          }
+        }
+      }
+    },
+    {
+      "behavioral_contract": [
+        "preserve CID/PIN gating behavior based on settings lookup",
+        "preserve disabled jurisdiction/service conflict behavior as HTTP 409",
+        "preserve downstream event detail shape for dataGenerator publication",
+        "preserve request record creation before downstream publish attempt",
+        "preserve ddbId generation in success and error paths"
+      ]
+    }
+  ],
+  "architecture_checks": [
+    {
+      "file": "request_creator/function_app.py",
+      "required": true,
+      "checks": [
+        "Azure Functions HTTP trigger entrypoint exists",
+        "no module-scope Azure client construction",
+        "no AWS imports remain",
+        "all functions have type annotations"
+      ]
+    },
+    {
+      "file": "request_creator/requirements.txt",
+      "required": true,
+      "checks": [
+        "includes azure-functions",
+        "includes azure-cosmos",
+        "includes azure-identity",
+        "includes azure-eventgrid"
+      ]
+    },
+    {
+      "file": "request_creator/host.json",
+      "required": true,
+      "checks": [
+        "valid Azure Functions host configuration"
+      ]
+    },
+    {
+      "file": "request_creator/local.settings.json",
+      "required": true,
+      "checks": [
+        "environment variable placeholders exist for Cosmos and Event Grid configuration"
+      ]
+    },
+    {
+      "file": "request_creator/tests/test_request_creator.py",
+      "required": true,
+      "checks": [
+        "contains at least one test that invokes the Azure Function entrypoint",
+        "mocks every Azure network call",
+        "covers happy path and validation failures"
+      ]
+    },
+    {
+      "file": "infrastructure/request_creator/main.bicep",
+      "required": true,
+      "checks": [
+        "declares Function App",
+        "declares Storage Account",
+        "declares Application Insights",
+        "declares Cosmos DB resources for request and settings containers",
+        "declares Event Grid resources or required publication target",
+        "uses managed identity and app settings for secrets/configuration"
+      ]
+    },
+    {
+      "global_checks": [
+        "no AWS SDK imports anywhere in the migrated module",
+        "no stubs, no NotImplementedError, no placeholder in-memory repositories",
+        "coverage remains at or above 80%",
+        "module is self-contained and does not import sibling packages"
+      ]
+    }
+  ]
+}

@@ -13,7 +13,7 @@ You are a senior platform architect analyzing AWS Lambda modules for migration t
 6. Identify risks and blockers BEFORE coding starts
 
 ## Output Format
-Write findings to `migration-analysis/{module-name}/analysis.md`:
+Write findings to `<MIGRATED_DIR>/analysis/{module-name}/analysis.md`:
 
 ```markdown
 # Migration Analysis: {module-name}

@@ -12,10 +12,10 @@ azure_openai:
 # Judgment tasks (analyzer, reviewer) get stronger models
 # Execution tasks (coder, tester) get faster/cheaper models
 models:
-  analyzer: gpt-4o           # Strong reasoning for dependency analysis
-  coder: gpt-4o-mini         # Fast execution for code generation
-  tester: gpt-4o-mini        # Moderate reasoning for test evaluation
-  reviewer: gpt-4o           # Strong reasoning for quality judgment
+  analyzer: gpt-5.4-mini          # Strong reasoning for dependency analysis
+  coder: gpt-5.4-mini         # Fast execution for code generation
+  tester: gpt-5.4-mini        # Moderate reasoning for test evaluation
+  reviewer: gpt-5.4-mini          # Strong reasoning for quality judgment
   # ── Discovery layer ──
   repo_scanner: gpt-5.4-mini
   dependency_grapher: gpt-5.4-mini
@@ -74,7 +74,7 @@ speed_profiles:
       high: 4.0
 
 # Default profile
-default_profile: balanced
+default_profile: turbo
 
 # Rate limiting
 rate_limits:
@@ -92,23 +92,23 @@ chunking:
 quality:
   coverage_floor: 80
   reviewer_confidence_threshold: 70
-  max_self_healing_attempts: 3
-  max_iterations_per_module: 10
+  max_self_healing_attempts: 2
+  max_iterations_per_module: 3
 
-# Operator-safety knobs (sub-project D.2)
+# Operator-safety knobs (sub-project D.2) — tuned for <10min runs
 timeouts:
-  per_call_seconds: 120
+  per_call_seconds: 90
   per_stage_seconds:
-    analyzer: 600
-    coder: 900
-    tester: 600
-    reviewer: 300
-    security: 300
-    scanner: 300
-    grapher: 600
-    brd: 900
-    architect: 900
-    stories: 600
+    analyzer: 180
+    coder: 240
+    tester: 180
+    reviewer: 120
+    security: 120
+    scanner: 120
+    grapher: 180
+    brd: 240
+    architect: 240
+    stories: 180
 
 cost:
   per_run_token_cap: null

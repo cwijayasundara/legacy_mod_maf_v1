@@ -15,7 +15,7 @@ from agent_harness.pipeline import PipelineResult
 
 
 def _write_artifacts(tmp_path, backlog_items, stories_pairs):
-    repo_dir = tmp_path / "discovery" / "synth"
+    repo_dir = discovery_paths.repo_dir("synth")
     repo_dir.mkdir(parents=True, exist_ok=True)
     backlog = Backlog(items=backlog_items)
     (repo_dir / "backlog.json").write_text(backlog.model_dump_json())
@@ -115,7 +115,7 @@ async def test_failure_propagates_skip_to_dependent(tmp_path, monkeypatch, repo)
     by_mod = {m.module: m for m in result.modules}
     assert by_mod["orders"].status == "failed"
     assert by_mod["payments"].status == "skipped"
-    assert "S1" in by_mod["payments"].reason
+    assert "orders" in by_mod["payments"].reason
     assert by_mod["notifications"].status == "completed"
     assert result.status == "partial"
     called_modules = {c.kwargs.get("module") for c in p.run.await_args_list}
@@ -158,3 +158,33 @@ async def test_persists_outcomes(tmp_path, monkeypatch, repo, pipeline_stub):
     assert run["status"] == "completed"
     assert len(run["modules"]) == 1
     assert run["modules"][0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_story_backlog_items_collapse_to_single_module_run(tmp_path, monkeypatch, repo):
+    monkeypatch.chdir(tmp_path)
+    _write_artifacts(
+        tmp_path,
+        [
+            _item("orders", 1, "S1"),
+            _item("orders", 2, "S2"),
+            _item("payments", 3, "S3"),
+        ],
+        [
+            ("orders", "S1", []),
+            ("orders", "S2", ["S1"]),
+            ("payments", "S3", ["S2"]),
+        ],
+    )
+
+    p = AsyncMock()
+    p.run = AsyncMock(side_effect=lambda module, **_: PipelineResult(
+        module=module, status="completed", message="", review_score=88
+    ))
+
+    result = await migrate_repo(repo_id="synth", repo=repo, pipeline=p)
+
+    assert result.status == "completed"
+    assert [m.module for m in result.modules] == ["orders", "payments"]
+    assert [m.wave for m in result.modules] == [1, 2]
+    assert p.run.await_count == 2

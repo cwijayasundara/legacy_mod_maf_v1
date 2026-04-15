@@ -41,10 +41,6 @@ ms-agent-harness/
 │       ├── ado_client.py                ADO REST (PRs, work items)
 │       └── README.md                    Full API documentation
 │
-├── example/                             ← SAMPLE LAMBDA
-│   ├── lambda/handler.py                Order processor (DynamoDB + S3 + SQS)
-│   └── README.md                        Step-by-step usage guide
-│
 ├── config/                              ← CONFIGURATION
 │   ├── settings.yaml                    Model deployments, speed profiles, rate limits
 │   ├── program.md                       Human steering (edit mid-run)
@@ -85,13 +81,11 @@ export FOUNDRY_MODEL=gpt-4o
 #   Method B: OpenAI directly (local dev)
 export OPENAI_API_KEY=sk-...
 
-#   Method C: .env file (create in parent directory)
+#   Method C: .env file (create in parent directory — recommended, used by run_migration.py)
 echo "OPENAI_API_KEY=sk-..." > ../.env
-
-# 3. Copy example Lambda into place
-mkdir -p src/lambda/order-processor
-cp example/lambda/* src/lambda/order-processor/
 ```
+
+The sample AWS Lambda source used for end-to-end runs lives at `../aws_legacy/generated_code/` — point `SOURCE_DIR` (see Option D below) at any Lambda tree you want to migrate.
 
 ## Running the Migration
 
@@ -138,6 +132,83 @@ docker run -p 8000:8000 \
 # Then use the API as in Option A
 ```
 
+### Option D: One-shot script (`run_migration.py`)
+
+A driver script at the repo root (`../run_migration.py` relative to this directory) runs the full pipeline — discovery → backlog approval → fanout migration — with **every knob configured via `.env`**. No CLI flags, no code edits required.
+
+#### 1. Create `.env` at the repo root
+
+```dotenv
+# --- auth (pick ONE) ---
+OPENAI_API_KEY=sk-...
+# or, for Azure AI Foundry:
+# FOUNDRY_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com
+
+# --- OpenAI model (used as the default for all agent roles) ---
+OPENAI_MODEL=gpt-4o
+
+# --- source & target (relative paths resolve against the repo root) ---
+SOURCE_DIR=aws_legacy/generated_code
+MIGRATED_DIR=azure_fn
+
+# --- optional ---
+REPO_ID=legacy-aws
+ORCHESTRATOR_PORT=8000
+```
+
+#### 2. Install dependencies (one-time)
+
+```bash
+pip3 install -r ms-agent-harness/requirements.txt
+```
+
+(`httpx` and `python-dotenv` — used by `run_migration.py` — are bundled in the harness `requirements.txt`.)
+
+#### 3. Run
+
+```bash
+# from the repo root (parent of ms-agent-harness/)
+python3 run_migration.py
+```
+
+#### What the script does
+
+1. Loads `.env` from the repo root and validates auth (`OPENAI_API_KEY` **or** `FOUNDRY_PROJECT_ENDPOINT`).
+2. Resolves `SOURCE_DIR` (default `aws_legacy/generated_code`) and `MIGRATED_DIR` (default `azure_fn`) against the repo root.
+3. Exports `MIGRATED_DIR` and `FOUNDRY_MODEL=$OPENAI_MODEL` into the orchestrator subprocess — the harness reads `MIGRATED_DIR` wherever migrated code is written or scanned, and uses `FOUNDRY_MODEL` as the default model for all roles.
+4. Starts `uvicorn agent_harness.orchestrator.api:app` on `127.0.0.1:$ORCHESTRATOR_PORT` and waits for readiness.
+5. `POST /discover` against `$SOURCE_DIR` (repo_id: `$REPO_ID`).
+6. `POST /approve/backlog/$REPO_ID`.
+7. `POST /migrate-repo/sync` to fan out migration across every discovered handler.
+8. Shuts the orchestrator down on exit.
+
+#### .env reference
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `OPENAI_API_KEY` | yes* | — | OpenAI credentials |
+| `FOUNDRY_PROJECT_ENDPOINT` | yes* | — | Azure AI Foundry endpoint (alternative to `OPENAI_API_KEY`) |
+| `OPENAI_MODEL` | no | `gpt-4o` | Default model for all agent roles (maps to `FOUNDRY_MODEL`). Per-role overrides still live in `config/settings.yaml` under `models:`. |
+| `SOURCE_DIR` | no | `aws_legacy/generated_code` | Lambda source tree to migrate |
+| `MIGRATED_DIR` | no | `azure_fn` | Output package for generated Azure Functions |
+| `REPO_ID` | no | `legacy-aws` | Logical id for this discovery/migration run |
+| `ORCHESTRATOR_PORT` | no | `8000` | Port for the spawned orchestrator |
+
+*Exactly one of `OPENAI_API_KEY` or `FOUNDRY_PROJECT_ENDPOINT` must be set.
+
+#### Outputs
+
+| Artifact | Location |
+|---|---|
+| Migrated Azure Functions | `$MIGRATED_DIR/<module>/function_app.py` |
+| Analysis / review / security-review | `$MIGRATED_DIR/analysis/<module>/*.md` |
+| Infrastructure / Bicep | `$MIGRATED_DIR/infrastructure/<module>/main.bicep` |
+| Discovery artifacts | `discovery/$REPO_ID/*.json` |
+
+#### Changing the OpenAI model per agent role
+
+`OPENAI_MODEL` sets the fallback model for every role. If you need different models per role (e.g. `gpt-4o` for the analyzer/reviewer and `gpt-4o-mini` for the coder/tester), edit the `models:` block in `ms-agent-harness/config/settings.yaml`.
+
 ### Option C: Via Python directly
 
 ```python
@@ -162,7 +233,7 @@ asyncio.run(main())
 Gate 1: Analyzer agent (gpt-4o)
    → Reads Lambda source, maps AWS deps, scores complexity
    → Caches results in SQLite (skip on retry)
-   → Output: migration-analysis/{module}/analysis.md
+   → Output: $MIGRATED_DIR/analysis/{module}/analysis.md
 
 Gate 2: Sprint Contract Negotiation
    → Coder proposes contract (what PASS means)
@@ -176,11 +247,11 @@ Gates 3-5: Self-Healing Migration Loop (up to 3 attempts)
 
 Gate 6: Reviewer agent (gpt-4o)
    → 8-point quality checklist
-   → Output: migration-analysis/{module}/review.md
+   → Output: $MIGRATED_DIR/analysis/{module}/review.md
 
 Gate 7: Security Reviewer agent (gpt-4o)
    → Automated OWASP regex scan + LLM deep analysis
-   → Output: migration-analysis/{module}/security-review.md
+   → Output: $MIGRATED_DIR/analysis/{module}/security-review.md
 ```
 
 ## Engineering Scaffolding
@@ -231,7 +302,7 @@ Edit `config/program.md` to steer agents mid-run:
 
 See `agent_harness/orchestrator/README.md` for full endpoint docs, request/response schemas, and environment variables.
 
-See `example/README.md` for a step-by-step walkthrough.
+For a step-by-step walkthrough using `aws_legacy/generated_code/` as the sample Lambda source, see **Option D: One-shot script (`run_migration.py`)** above.
 
 ## How It Differs From codex-harness
 

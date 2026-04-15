@@ -1,0 +1,1 @@
+{"pass_criteria": {"unit_checks": "All unit tests must pass.", "integration_checks": "Integration tests validate successful interaction with Azure services.", "contract_checks": "Response schemas match the defined API contract.", "architecture_checks": "Function architecture aligns with Azure Functions guidelines."}}

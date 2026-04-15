@@ -1,0 +1,15 @@
+{
+  "module": "filing_queue_status",
+  "attempt": 1,
+  "overall_verdict": "FAIL",
+  "failures": [
+    {
+      "failure_id": "F001",
+      "layer": "unknown",
+      "error_category": "assertion_error",
+      "description": "# Evaluation Verdict: FAIL\n\n## Layer 1: Unit Tests\n- **Tests found:** Yes, `tests/test_filing_queue_status.py`\n- **What they verify:**\n  - malformed JSON returns `{\"ok\": False, \"reason\": \"bad_body\"}`\n  - missing required fields are rejected as non-retryable bad body\n  - Delaware COGS bypass path returns `{\"ok\": True, \"bypass\": \"DELAWARE_COGS\"}`\n  - standard message path returns success and writes to Cosmos / publishes to Service Bus\n  - concurrency gate raises `RuntimeError(\"bot_busy\")`\n  - hand",
+      "self_healing_strategy": "Re-read the original Lambda and compare behavior."
+    }
+  ],
+  "prior_attempts": []
+}

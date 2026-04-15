@@ -1,0 +1,189 @@
+{
+  "module": "validation",
+  "language": "python",
+  "complexity": "MEDIUM",
+  "estimated_effort_hours": 10,
+  "proposed_by": "migration-coder",
+  "proposed_at": "2026-04-15T16:05:06.079049+00:00",
+  "finalized_by": "migration-tester",
+  "unit_checks": [
+    {
+      "function": "handler",
+      "behavior": "returns a soft-failure response when event.detail.ddbId is missing",
+      "expected": {
+        "ok": false,
+        "reason": "missing ddbId"
+      }
+    },
+    {
+      "function": "handler",
+      "behavior": "loads the record by ddbId, validates merged JSON, and returns success when validation passes",
+      "expected": {
+        "ok": true,
+        "ddbId": "<same ddbId from event>"
+      }
+    },
+    {
+      "function": "handler",
+      "behavior": "returns validation errors when the validator reports failure",
+      "expected": {
+        "ok": false,
+        "ddbId": "<same ddbId from event>",
+        "errors": [
+          "<validation errors>"
+        ]
+      }
+    },
+    {
+      "function": "handler",
+      "behavior": "marks the record as errored through shared error handling when the record is missing",
+      "expected": {
+        "raises": "RuntimeError",
+        "message_contains": "record"
+      }
+    },
+    {
+      "function": "handler",
+      "behavior": "converts unexpected exceptions into a failure response containing the exception message",
+      "expected": {
+        "ok": false,
+        "ddbId": "<same ddbId from event>",
+        "error": "<exception message>"
+      }
+    },
+    {
+      "function": "handle_error",
+      "behavior": "updates failure status on the source record and preserves error context",
+      "expected": {
+        "status_update": "error state recorded",
+        "context": "ddbId and exception details included"
+      }
+    },
+    {
+      "function": "push_item_to_common_queue",
+      "behavior": "publishes the validated payload with FIFO-compatible grouping and deduplication fields preserved",
+      "expected": {
+        "message_published": true,
+        "group_id": "preserved",
+        "deduplication_id": "preserved"
+      }
+    }
+  ],
+  "integration_checks": [
+    {
+      "service": "Cosmos DB or Table Storage repository replacement",
+      "verify": "the handler reads the source record by id using the Azure SDK client path and writes validation status updates through the same owning repository"
+    },
+    {
+      "service": "Azure Service Bus",
+      "verify": "the handler publishes the validated payload to a queue/topic using the Azure SDK, with FIFO-equivalent session/group semantics when required"
+    },
+    {
+      "service": "Azure Functions trigger",
+      "verify": "the function entrypoint receives the migrated event payload and routes to handler logic without importing AWS SDKs"
+    },
+    {
+      "service": "Azure SDK mocking",
+      "verify": "all Azure client constructors and network calls are mockable in tests and no live Azure calls are performed"
+    }
+  ],
+  "contract_checks": [
+    {
+      "name": "input_contract",
+      "schema": {
+        "event": {
+          "type": "object",
+          "required": [
+            "detail"
+          ],
+          "properties": {
+            "detail": {
+              "type": "object",
+              "required": [
+                "ddbId"
+              ],
+              "properties": {
+                "ddbId": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "success_response_contract",
+      "schema": {
+        "ok": {
+          "const": true
+        },
+        "ddbId": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "name": "missing_id_response_contract",
+      "schema": {
+        "ok": {
+          "const": false
+        },
+        "reason": {
+          "const": "missing ddbId"
+        }
+      }
+    },
+    {
+      "name": "validation_failure_response_contract",
+      "schema": {
+        "ok": {
+          "const": false
+        },
+        "ddbId": {
+          "type": "string"
+        },
+        "errors": {
+          "type": "array"
+        }
+      }
+    },
+    {
+      "name": "unexpected_error_response_contract",
+      "schema": {
+        "ok": {
+          "const": false
+        },
+        "ddbId": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "architecture_checks": [
+    {
+      "check": "function_app.py exists under the validation module and exposes the Azure Function entrypoint"
+    },
+    {
+      "check": "tests directory exists with unit tests covering handler, error handling, and queue publish behavior"
+    },
+    {
+      "check": "infrastructure/validation/main.bicep exists and declares the Function App, required Storage Account, Application Insights, Managed Identity, and any needed backing services"
+    },
+    {
+      "check": "no AWS imports remain in production code, including boto3, botocore, or aws_clients references"
+    },
+    {
+      "check": "all Azure SDK clients are lazily constructed and mockable without module-scope network calls or environment lookups"
+    },
+    {
+      "check": "code coverage for the module remains at or above 80%"
+    },
+    {
+      "check": "module remains self-contained and does not import sibling packages outside the validation module"
+    }
+  ]
+}

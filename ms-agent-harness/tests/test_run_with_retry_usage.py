@@ -17,10 +17,11 @@ class _Agent:
 
 
 def _settings_with_cap(cap: int | None, per_call: int = 30):
-    from agent_harness.config import Settings, TimeoutConfig, CostConfig
+    from agent_harness.config import Settings, TimeoutConfig, CostConfig, RateLimits
     return Settings(
         timeouts=TimeoutConfig(per_call_seconds=per_call),
         cost=CostConfig(per_run_token_cap=cap),
+        rate_limits=RateLimits(requests_per_minute=1000, sliding_window_seconds=1),
     )
 
 
@@ -54,3 +55,33 @@ async def test_token_budget_exceeded_propagates():
                return_value=_settings_with_cap(50)):
         with pytest.raises(observability.TokenBudgetExceeded):
             await run_with_retry(agent, "msg")
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_error_retries_then_succeeds():
+    waits: list[float] = []
+
+    class _FlakyAgent:
+        def __init__(self):
+            self.calls = 0
+
+        async def run(self, message: str):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("429 Too Many Requests")
+            return SimpleNamespace(text="ok", usage=None)
+
+    agent = _FlakyAgent()
+
+    async def _fake_sleep(delay: float):
+        waits.append(delay)
+
+    with patch("agent_harness.base._request_gate", None), \
+            patch("agent_harness.base._request_gate_signature", None), \
+            patch("agent_harness.base.get_settings", return_value=_settings_with_cap(None)), \
+            patch("agent_harness.base.asyncio.sleep", new=_fake_sleep):
+        result = await run_with_retry(agent, "msg", max_retries=3)
+
+    assert result == "ok"
+    assert waits
+    assert waits[0] >= 5.0

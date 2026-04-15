@@ -10,7 +10,7 @@ EdgeKind = Literal[
     "imports", "reads", "writes", "produces", "consumes",
     "invokes", "shares_db",
 ]
-NodeKind = Literal["module", "aws_resource"]
+NodeKind = Literal["module", "aws_resource", "library"]
 
 
 class RepoMeta(BaseModel):

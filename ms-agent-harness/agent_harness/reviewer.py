@@ -7,6 +7,7 @@ Read-only: reviews but does NOT modify code.
 from pathlib import Path
 
 from .base import create_agent, run_with_retry
+from .paths import analysis_dir as _analysis_dir, infra_dir as _infra_dir, migrated_dir
 from .tools import read_file, search_files, list_directory, validate_bicep
 from .context.chunker import needs_chunking, chunk_file
 
@@ -42,11 +43,11 @@ async def review_module(
     """
     agent = create_reviewer(repo_root=repo_root, module_path=module_path)
 
-    analysis_dir = Path("migration-analysis") / module
+    analysis_dir = _analysis_dir(module)
     analysis_dir.mkdir(parents=True, exist_ok=True)
     review_path = analysis_dir / "review.md"
-    azure_func_dir = Path("src/azure-functions") / module
-    infra_dir = Path("infrastructure") / module
+    azure_func_dir = migrated_dir(module)
+    infra_dir = _infra_dir(module)
 
     # Gather all context files
     context_sections = []
@@ -138,12 +139,29 @@ async def review_module(
     # Write the review
     review_path.write_text(result, encoding="utf-8")
 
-    # Parse recommendation from output
+    # Parse recommendation from output. Tolerate several formats the LLM tends
+    # to produce: "## Recommendation: X", "Recommendation: **X**", trailing
+    # prose like "my recommendation is BLOCKED", all case/whitespace variants.
+    import re as _re
     recommendation = "CHANGES_REQUESTED"  # default conservative
-    if "Recommendation: APPROVE" in result:
-        recommendation = "APPROVE"
-    elif "Recommendation: BLOCKED" in result:
-        recommendation = "BLOCKED"
+    norm = result.upper()
+    # Prefer an explicit labeled verdict anywhere in the doc.
+    labeled = _re.search(
+        r"RECOMMENDATION[^A-Z]{0,40}(APPROVE|BLOCKED|CHANGES[_ ]REQUESTED)",
+        norm,
+    )
+    if labeled:
+        verdict = labeled.group(1).replace(" ", "_")
+        recommendation = "APPROVE" if verdict == "APPROVE" else (
+            "BLOCKED" if verdict == "BLOCKED" else "CHANGES_REQUESTED"
+        )
+    else:
+        # Fallback: look at final ~400 chars for a bolded / prose verdict.
+        tail = norm[-400:]
+        if _re.search(r"\bAPPROVE\b", tail) and "NOT APPROVE" not in tail:
+            recommendation = "APPROVE"
+        elif _re.search(r"\bBLOCKED\b", tail):
+            recommendation = "BLOCKED"
 
     # Parse confidence score
     confidence = 0

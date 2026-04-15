@@ -12,6 +12,7 @@ Based on Azure Legacy Modernization Agents' ChunkedMigrationProcess:
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from ..config import load_settings
 
@@ -25,6 +26,26 @@ class Chunk:
     content: str
     context_summary: str = ""  # Summary of preceding chunks for context
 
+    def __str__(self) -> str:  # f-string friendly: `{chunk}` == chunk body
+        return self.content
+
+
+_LANG_BY_SUFFIX = {
+    ".py": "python",
+    ".js": "node",
+    ".mjs": "node",
+    ".ts": "node",
+    ".java": "java",
+    ".cs": "csharp",
+}
+
+
+def _coerce_text(src) -> tuple[str, str | None]:
+    """Accept either raw content or a Path; return (content, inferred_language)."""
+    if isinstance(src, Path):
+        return src.read_text(encoding="utf-8", errors="replace"), _LANG_BY_SUFFIX.get(src.suffix)
+    return src, None
+
 
 # Boundary patterns per language (function/class/method definitions)
 BOUNDARY_PATTERNS = {
@@ -35,15 +56,16 @@ BOUNDARY_PATTERNS = {
 }
 
 
-def needs_chunking(content: str) -> bool:
-    """Check if a file exceeds chunking thresholds."""
+def needs_chunking(content) -> bool:
+    """Check if a file exceeds chunking thresholds. Accepts str or Path."""
+    text, _ = _coerce_text(content)
     settings = load_settings()
-    lines = content.count("\n") + 1
-    chars = len(content)
+    lines = text.count("\n") + 1
+    chars = len(text)
     return lines > settings.chunking.max_lines or chars > settings.chunking.max_chars
 
 
-def chunk_file(content: str, language: str, target_chunk_lines: int = 500) -> list[Chunk]:
+def chunk_file(content, language: str | None = None, target_chunk_lines: int = 500) -> list[Chunk]:
     """
     Split a large source file into semantic chunks.
 
@@ -54,12 +76,14 @@ def chunk_file(content: str, language: str, target_chunk_lines: int = 500) -> li
 
     Returns list of Chunks with content and metadata.
     """
-    if not needs_chunking(content):
-        return [Chunk(index=0, start_line=1, end_line=content.count("\n") + 1, content=content)]
+    text, inferred_lang = _coerce_text(content)
+    language = language or inferred_lang or "python"
+    if not needs_chunking(text):
+        return [Chunk(index=0, start_line=1, end_line=text.count("\n") + 1, content=text)]
 
     settings = load_settings()
     overlap = settings.chunking.overlap_lines
-    lines = content.split("\n")
+    lines = text.split("\n")
     total_lines = len(lines)
 
     # Find boundary line numbers

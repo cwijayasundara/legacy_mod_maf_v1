@@ -1,0 +1,92 @@
+{
+  "items": [
+    {
+      "module": "data_generator",
+      "language": "python",
+      "work_item_id": "S-data_generator",
+      "title": "Migrate data_generator",
+      "description": "Migrate handler `handlers/data_generator.py` from AWS Lambda to Azure Functions and preserve its source behavior.",
+      "acceptance_criteria": "Azure Function for `data_generator` is generated from `handlers/data_generator.py`.\nTests and infrastructure for `data_generator` are generated.\nBehavioral contract for `data_generator` is preserved relative to the source handler.",
+      "source_paths": [
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/handlers/data_generator.py"
+      ],
+      "context_paths": [
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/__init__.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/aws_clients.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/config.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/constants.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/helper.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/jwt_validation.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/transformer.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/validators.py"
+      ],
+      "wave": 1
+    },
+    {
+      "module": "filing_queue_status",
+      "language": "python",
+      "work_item_id": "S-filing_queue_status",
+      "title": "Migrate filing_queue_status",
+      "description": "Migrate handler `handlers/filing_queue_status.py` from AWS Lambda to Azure Functions and preserve its source behavior.",
+      "acceptance_criteria": "Azure Function for `filing_queue_status` is generated from `handlers/filing_queue_status.py`.\nTests and infrastructure for `filing_queue_status` are generated.\nBehavioral contract for `filing_queue_status` is preserved relative to the source handler.",
+      "source_paths": [
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/handlers/filing_queue_status.py"
+      ],
+      "context_paths": [
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/__init__.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/aws_clients.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/config.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/constants.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/helper.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/jwt_validation.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/transformer.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/validators.py"
+      ],
+      "wave": 1
+    },
+    {
+      "module": "request_creator",
+      "language": "python",
+      "work_item_id": "S-request_creator",
+      "title": "Migrate request_creator",
+      "description": "Migrate handler `handlers/request_creator.py` from AWS Lambda to Azure Functions and preserve its source behavior.",
+      "acceptance_criteria": "Azure Function for `request_creator` is generated from `handlers/request_creator.py`.\nTests and infrastructure for `request_creator` are generated.\nBehavioral contract for `request_creator` is preserved relative to the source handler.",
+      "source_paths": [
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/handlers/request_creator.py"
+      ],
+      "context_paths": [
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/__init__.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/aws_clients.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/config.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/constants.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/helper.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/jwt_validation.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/transformer.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/validators.py"
+      ],
+      "wave": 1
+    },
+    {
+      "module": "validation",
+      "language": "python",
+      "work_item_id": "S-validation",
+      "title": "Migrate validation",
+      "description": "Migrate handler `handlers/validation.py` from AWS Lambda to Azure Functions and preserve its source behavior.",
+      "acceptance_criteria": "Azure Function for `validation` is generated from `handlers/validation.py`.\nTests and infrastructure for `validation` are generated.\nBehavioral contract for `validation` is preserved relative to the source handler.",
+      "source_paths": [
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/handlers/validation.py"
+      ],
+      "context_paths": [
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/__init__.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/aws_clients.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/config.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/constants.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/helper.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/jwt_validation.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/transformer.py",
+        "/Users/chamindawijayasundara/Documents/rnd_2026/ai_foundry_agents/aws_legacy/generated_code/services/validators.py"
+      ],
+      "wave": 1
+    }
+  ]
+}

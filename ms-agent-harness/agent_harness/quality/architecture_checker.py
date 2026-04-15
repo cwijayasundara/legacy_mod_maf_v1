@@ -8,6 +8,12 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+IGNORED_PARTS = {
+    ".git", ".hg", ".svn",
+    ".venv", "venv", "env",
+    "node_modules", "__pycache__", ".pytest_cache",
+}
+
 LAYER_RANKS = {
     "types": 0, "models": 0, "schemas": 0,
     "config": 1,
@@ -30,34 +36,39 @@ def check_architecture(project_root: str) -> list[ArchViolation]:
     violations = []
     root = Path(project_root)
 
-    for pattern in ["**/*.py", "**/*.js", "**/*.ts"]:
-        for filepath in root.glob(pattern):
-            # Skip test files and node_modules
-            rel = str(filepath.relative_to(root))
-            if "test" in rel.lower() or "node_modules" in rel or "__pycache__" in rel:
-                continue
+    for filepath in root.rglob("*"):
+        if not filepath.is_file() or filepath.suffix not in {".py", ".js", ".ts"}:
+            continue
 
-            # Determine this file's layer
-            file_layer, file_rank = _get_layer(rel)
-            if file_layer is None:
-                continue
+        rel_path = filepath.relative_to(root)
+        if any(part in IGNORED_PARTS for part in rel_path.parts):
+            continue
 
-            # Check each import line
-            try:
-                for i, line in enumerate(filepath.read_text(errors="replace").split("\n"), 1):
-                    stripped = line.strip()
-                    if not (stripped.startswith("from ") or stripped.startswith("import ")):
-                        continue
-                    for target_layer, target_rank in LAYER_RANKS.items():
-                        if target_rank > file_rank:
-                            if re.search(rf'\b{target_layer}\b', stripped):
-                                violations.append(ArchViolation(
-                                    file=rel, line=i,
-                                    source_layer=file_layer, target_layer=target_layer,
-                                    import_text=stripped[:100],
-                                ))
-            except Exception:
-                continue
+        rel = str(rel_path)
+        if "test" in rel.lower():
+            continue
+
+        # Determine this file's layer
+        file_layer, file_rank = _get_layer(rel)
+        if file_layer is None:
+            continue
+
+        # Check each import line
+        try:
+            for i, line in enumerate(filepath.read_text(errors="replace").split("\n"), 1):
+                stripped = line.strip()
+                if not (stripped.startswith("from ") or stripped.startswith("import ")):
+                    continue
+                for target_layer, target_rank in LAYER_RANKS.items():
+                    if target_rank > file_rank:
+                        if re.search(rf'\b{target_layer}\b', stripped):
+                            violations.append(ArchViolation(
+                                file=rel, line=i,
+                                source_layer=file_layer, target_layer=target_layer,
+                                import_text=stripped[:100],
+                            ))
+        except Exception:
+            continue
     return violations
 
 def _get_layer(path: str) -> tuple[str | None, int]:

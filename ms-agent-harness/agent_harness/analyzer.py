@@ -44,7 +44,8 @@ async def analyze_module(
     """
     agent = create_analyzer(repo_root=repo_root, module_path=module_path)
 
-    output_dir = Path("migration-analysis") / module
+    from .paths import analysis_dir
+    output_dir = analysis_dir(module)
     output_dir.mkdir(parents=True, exist_ok=True)
     analysis_path = output_dir / "analysis.md"
 
@@ -86,16 +87,16 @@ async def analyze_module(
                 )
 
     source_listing = "\n\n".join(file_contents)
-    complexity = await score_complexity(source_dir, language)
+    complexity = score_complexity(source_dir, language)
 
     prompt = (
         f"Analyze the AWS Lambda module '{module}' ({language}) for migration "
         f"to Azure Functions.\n\n"
         f"## Pre-computed Complexity Score\n"
-        f"- Overall complexity: {complexity['overall']}\n"
-        f"- AWS dependency count: {complexity['aws_dependency_count']}\n"
-        f"- Inter-service coupling: {complexity['coupling_score']}\n"
-        f"- Trigger count: {complexity['trigger_count']}\n\n"
+        f"- Overall score: {complexity.score} ({complexity.level})\n"
+        f"- Breakdown: {complexity.breakdown}\n"
+        + (f"- Details:\n  - " + "\n  - ".join(complexity.details) + "\n\n" if complexity.details else "\n")
+        +
         f"## Source Files\n\n{source_listing}\n\n"
         f"Write your full analysis to: {analysis_path}\n"
         f"Follow the output format from your system instructions exactly."

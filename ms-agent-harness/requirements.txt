@@ -24,6 +24,7 @@ aiosqlite>=0.20.0                   # SQLite async for analysis cache + checkpoi
 
 # Configuration
 pyyaml>=6.0.0                       # settings.yaml parsing
+python-dotenv>=1.0.0                # .env loading for run_migration.py
 
 # ── Test dependencies ──
 pytest>=8.0.0
@@ -31,5 +32,5 @@ pytest-cov>=5.0.0
 pytest-asyncio>=0.24.0
 
 # ── Discovery layer ──
-tree-sitter>=0.21.0
-tree-sitter-languages>=1.10.0
+# Python AST parsing uses stdlib `ast`; tree-sitter is reserved for v1.1
+# cross-language support and will be added when those adapters land.

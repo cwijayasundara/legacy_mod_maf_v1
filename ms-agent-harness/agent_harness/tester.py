@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 
 from .base import create_agent, run_with_retry
+from .paths import analysis_dir, migrated_dir
 from .tools.file_tools import read_file, search_files, list_directory
 from .tools.test_runner import run_tests, measure_coverage
 from .context.chunker import needs_chunking, chunk_file
@@ -50,7 +51,7 @@ Return the finalized contract as valid JSON. The contract is IMMUTABLE after thi
     result = await run_with_retry(agent, prompt)
 
     # Try to extract JSON from the response
-    out_dir = Path("migration-analysis") / module
+    out_dir = analysis_dir(module)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -86,8 +87,8 @@ async def evaluate_module(
     Returns the evaluation result text (containing PASS or FAIL verdict).
     """
     agent = create_tester(repo_root=repo_root, module_path=module_path)
-    out_dir = Path("migration-analysis") / module
-    azure_dir = Path("src") / "azure-functions" / module
+    out_dir = analysis_dir(module)
+    azure_dir = migrated_dir(module)
 
     if source_paths:
         src_listing = "Source files: " + ", ".join(source_paths)
@@ -133,7 +134,7 @@ Include specific issues found for each layer."""
 
 def _write_failure_report(module: str, attempt: int, result: str):
     """Write structured eval-failures.json for the coder to consume."""
-    out_dir = Path("migration-analysis") / module
+    out_dir = analysis_dir(module)
     report = {
         "module": module,
         "attempt": attempt,

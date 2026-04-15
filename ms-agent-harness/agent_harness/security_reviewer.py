@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 from .base import create_agent, run_with_retry
+from .paths import analysis_dir as _analysis_dir, migrated_dir
 from .tools.file_tools import read_file, search_files, list_directory
 from .tools.bicep_tool import validate_bicep
 from .quality.security_scanner import scan_directory, SecurityFinding
@@ -29,8 +30,8 @@ async def security_review(
     module_path: str | None = None,
 ) -> dict:
     """Run automated + LLM security scan on migrated code."""
-    azure_dir = f"src/azure-functions/{module}"
-    out_dir = Path("migration-analysis") / module
+    azure_dir = str(migrated_dir(module))
+    out_dir = _analysis_dir(module)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Phase 1: Automated regex scan

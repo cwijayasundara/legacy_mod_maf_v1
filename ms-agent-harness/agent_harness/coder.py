@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import create_agent, run_with_retry
+from .paths import analysis_dir, infra_dir, migrated_dir
 from .tools import read_file, write_file, search_files, list_directory, apply_patch
 from .context.chunker import needs_chunking, chunk_file
 
@@ -23,23 +24,16 @@ def create_coder(repo_root=None, module_path=None):
     )
 
 
-async def propose_contract(module: str, analysis_path: str) -> str:
-    """
-    Propose a sprint contract based on the analyzer's output.
-
-    The coder reads the analysis.md and produces a sprint-contract.json
-    defining exactly what PASS means for this module's migration.
-
-    Args:
-        module: Name of the module being migrated.
-        analysis_path: Path to the analysis.md produced by the analyzer.
-
-    Returns:
-        Path to the generated sprint-contract.json.
-    """
+async def propose_contract(
+    module: str,
+    language: str = "python",
+    analysis_path: str = "",
+    acceptance_criteria: str = "",
+) -> str:
+    """Propose a sprint contract based on the analyzer's output."""
     agent = create_coder()
 
-    output_dir = Path("migration-analysis") / module
+    output_dir = analysis_dir(module)
     output_dir.mkdir(parents=True, exist_ok=True)
     contract_path = output_dir / "sprint-contract.json"
 
@@ -49,11 +43,13 @@ async def propose_contract(module: str, analysis_path: str) -> str:
     # Handle chunking for large analysis files
     if needs_chunking(Path(analysis_path)):
         chunks = chunk_file(Path(analysis_path))
-        analysis_content = "\n\n".join(chunks)
+        analysis_content = "\n\n".join(c.content for c in chunks)
 
     prompt = (
-        f"Read the following analysis for module '{module}' and propose a sprint contract.\n\n"
+        f"Read the following analysis for module '{module}' ({language}) and propose a sprint contract.\n\n"
         f"## Analysis\n{analysis_content}\n\n"
+        + (f"## Acceptance criteria (from backlog)\n{acceptance_criteria}\n\n" if acceptance_criteria else "")
+        +
         f"Write a sprint contract JSON to: {contract_path}\n"
         f"The contract must include:\n"
         f"- unit_checks: specific behaviors to unit test (function + expected behavior)\n"
@@ -115,18 +111,18 @@ async def migrate_module(
     """
     agent = create_coder(repo_root=repo_root, module_path=module_path)
 
-    output_base = Path("src/azure-functions") / module
+    output_base = migrated_dir(module)
     output_base.mkdir(parents=True, exist_ok=True)
-    infra_dir = Path("infrastructure") / module
-    infra_dir.mkdir(parents=True, exist_ok=True)
+    infra = infra_dir(module)
+    infra.mkdir(parents=True, exist_ok=True)
 
-    analysis_dir = Path("migration-analysis") / module
+    analysis = analysis_dir(module)
 
     # Read analysis
     analysis_content = Path(analysis_path).read_text(encoding="utf-8")
 
     # Read sprint contract if it exists
-    contract_path = analysis_dir / "sprint-contract.json"
+    contract_path = analysis / "sprint-contract.json"
     contract_content = ""
     if contract_path.exists():
         contract_content = contract_path.read_text(encoding="utf-8")
@@ -161,16 +157,19 @@ async def migrate_module(
 
     source_listing = "\n\n".join(src_blocks)
 
-    # Read failure report if this is a retry attempt
+    # Read failure report whenever one exists. It's written by the tester on
+    # prior-attempt FAIL and by the pipeline's reviewer-retry path; either
+    # way the coder must act on it before regenerating.
     failure_context = ""
-    if attempt > 1:
-        failures_path = analysis_dir / "eval-failures.json"
-        if failures_path.exists():
-            failure_context = (
-                f"\n\n## Previous Failure Report (Attempt {attempt - 1})\n"
-                f"{failures_path.read_text(encoding='utf-8')}\n"
-                f"Apply the self-healing strategy from the failure report."
-            )
+    failures_path = analysis / "eval-failures.json"
+    if failures_path.exists():
+        failure_context = (
+            f"\n\n## Previous Failure Report\n"
+            f"{failures_path.read_text(encoding='utf-8')}\n"
+            f"Apply the self-healing strategy from the failure report. "
+            f"If the report has `source: reviewer`, the reviewer BLOCKED the "
+            f"prior build — resolve every blocking issue this pass."
+        )
 
     prompt = (
         f"Migrate the AWS Lambda module '{module}' ({language}) to Azure Functions.\n"
@@ -182,14 +181,14 @@ async def migrate_module(
         f"Follow TDD-first sequence:\n"
         f"1. Write unit tests to {output_base}/tests/\n"
         f"2. Write the Azure Function to {output_base}/\n"
-        f"3. Generate Bicep template to {infra_dir}/main.bicep\n\n"
+        f"3. Generate Bicep template to {infra}/main.bicep\n\n"
         f"Follow your system instructions for language-specific patterns."
     )
 
     result = await run_with_retry(agent, prompt, max_retries=3)
 
     # The agent writes files via tool calls; result is a summary
-    summary_path = analysis_dir / "coder-output.md"
+    summary_path = analysis / "coder-output.md"
     summary_path.write_text(result, encoding="utf-8")
 
     return str(output_base)

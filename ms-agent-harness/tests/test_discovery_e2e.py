@@ -9,6 +9,7 @@ from agent_harness.discovery.artifacts import (
 )
 from agent_harness.discovery import paths
 from agent_harness.persistence.repository import MigrationRepository
+from agent_harness.discovery.story_decomposer import synthesize_stories
 
 FIXTURE = Path(__file__).parent / "fixtures" / "synthetic_repo"
 
@@ -128,3 +129,39 @@ async def test_e2e_synthetic_repo(tmp_path, monkeypatch):
     assert waves == sorted(waves)
     assert max(waves) - min(waves) == 2
     assert paths.backlog_path("synth").exists()
+
+
+def test_synthesize_stories_fast_path_produces_module_level_dag():
+    inventory = Inventory(
+        repo_meta={"root_path": str(FIXTURE), "total_files": 3, "total_loc": 30,
+                   "discovered_at": "2026-04-14T00:00:00Z"},
+        modules=[
+            ModuleRecord(id="orders", path="orders", language="python",
+                         handler_entrypoint="orders/handler.py", loc=10, config_files=[]),
+            ModuleRecord(id="payments", path="payments", language="python",
+                         handler_entrypoint="payments/handler.py", loc=10, config_files=[]),
+            ModuleRecord(id="notifications", path="notifications", language="python",
+                         handler_entrypoint="notifications/handler.py", loc=10, config_files=[]),
+        ],
+    )
+    from agent_harness.discovery.artifacts import DependencyGraph, GraphNode, GraphEdge
+    graph = DependencyGraph(
+        nodes=[
+            GraphNode(id="orders", kind="module", attrs={}),
+            GraphNode(id="payments", kind="module", attrs={}),
+            GraphNode(id="notifications", kind="module", attrs={}),
+        ],
+        edges=[
+            GraphEdge(src="payments", dst="orders", kind="imports"),
+            GraphEdge(src="notifications", dst="payments", kind="imports"),
+        ],
+    )
+
+    stories = synthesize_stories(inventory, graph)
+
+    assert {epic.module_id for epic in stories.epics} == {"orders", "payments", "notifications"}
+    by_id = {story.id: story for story in stories.stories}
+    assert by_id["S-orders"].depends_on == []
+    assert by_id["S-payments"].depends_on == ["S-orders"]
+    assert by_id["S-notifications"].depends_on == ["S-payments"]
+    assert all(story.acceptance_criteria for story in stories.stories)

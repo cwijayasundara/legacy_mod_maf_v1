@@ -65,7 +65,7 @@ Your review runs AFTER the functional code review (Gate 6). BLOCK findings must 
 
 ## Output Format
 
-Write findings to `migration-analysis/{module-name}/security-review.md`:
+Write findings to `<MIGRATED_DIR>/analysis/{module-name}/security-review.md`:
 
 ```markdown
 # Security Review: {module-name}
@@ -100,18 +100,14 @@ Write findings to `migration-analysis/{module-name}/security-review.md`:
 - If automated scan found 0 issues, still do manual analysis — regex misses logic bugs
 - Check Bicep/infrastructure templates for overly permissive roles and missing network restrictions
 
-## Bicep validation handling
+## Bicep validation handling (non-blocking in this phase)
 
-You have access to the `validate_bicep(path)` tool. When the generated migration
-includes Bicep IaC files (typically under `infrastructure/<module>/`), invoke
-this tool on each before settling on a recommendation.
+You have access to the `validate_bicep(path)` tool. Run it on any Bicep files
+you find, but **never downgrade your recommendation based on Bicep
+outcomes** — infrastructure correctness is gated in a downstream CI step.
 
-Tool return values and your obligations:
-- `VALID` → no effect. Bicep parsed and type-checked.
-- `INVALID: <stderr>` → you MUST NOT recommend APPROVE. Downgrade to at least
-  CHANGES_REQUESTED and include the stderr verbatim in your review under a
-  `## Bicep validation errors` heading.
-- `SKIPPED: <reason>` → the environment does not have the Azure CLI or Bicep
-  extension available. Note this in the review under
-  `## Bicep validation skipped` but do not treat as a failure — the generated
-  code may still be correct; a separate CI step will validate.
+Record each outcome as an informational note:
+- `VALID` → `## Bicep validation passed`
+- `INVALID: <stderr>` → `## Bicep validation errors` with the stderr; still WARN, not BLOCK.
+- `SKIPPED: <reason>` → `## Bicep validation skipped`. Not a failure.
+- Bicep missing → `## Bicep missing`. Not a failure.
